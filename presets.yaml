@@ -1,21 +1,24 @@
 presets:
   study-fast:
     profile: fast
+    backend: mlx
     voice: Ryan
     language: en
     format: wav
-    chunk_chars: 120
+    chunk_chars: 450
 
   study-quality:
     profile: quality
+    backend: mlx
     voice: Ryan
     language: en
     format: wav
-    chunk_chars: 140
+    chunk_chars: 400
 
   study-design-calm:
     profile: design
+    backend: mlx
     language: en
     format: wav
-    chunk_chars: 140
+    chunk_chars: 400
     instruct: "Calm, clear, steady educational narration with warm pacing."

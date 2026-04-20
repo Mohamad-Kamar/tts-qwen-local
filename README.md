@@ -6,7 +6,12 @@ It is designed for the same simple flow as `tts-local`: give it text, get an aud
 
 ## Status
 
-This project targets Apple Silicon first. On this machine class, `fast` (`0.6B-CustomVoice`) is the intended daily-use profile. Higher-quality profiles are supported, but they are slower.
+This project now supports two local runtimes:
+
+- `pytorch`: the original `qwen-tts` backend
+- `mlx`: an Apple Silicon-native backend that runs through an isolated `mlx-audio` Python environment
+
+On Apple Silicon, `auto` prefers `mlx` when an MLX Python is available. On this machine class, `fast` (`0.6B-CustomVoice`) is the intended daily-use profile.
 
 ## Features
 
@@ -23,6 +28,7 @@ This project targets Apple Silicon first. On this machine class, `fast` (`0.6B-C
 - Stable sentence-based chunking for long text
 - `preload` command for downloading weights ahead of time
 - `bench` command for cold/warm timing measurements
+- Automatic backend selection on Apple Silicon
 - Optional ffmpeg-based output conversion to `mp3`, `m4a`, `aac`, `flac`, or `opus`
 
 ## Requirements
@@ -30,6 +36,7 @@ This project targets Apple Silicon first. On this machine class, `fast` (`0.6B-C
 - Python 3.12 recommended
 - Apple Silicon, CUDA, or CPU
 - Optional: `ffmpeg` for non-WAV output
+- Optional but recommended on Apple Silicon: a separate MLX environment, for example at `../.venv-mlx-audio`
 
 ## Install
 
@@ -37,6 +44,14 @@ This project targets Apple Silicon first. On this machine class, `fast` (`0.6B-C
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e .
+```
+
+Optional Apple Silicon MLX env:
+
+```bash
+python3.12 -m venv ../.venv-mlx-audio
+source ../.venv-mlx-audio/bin/activate
+python -m pip install -U mlx-audio
 ```
 
 ## Quick Start
@@ -51,6 +66,12 @@ Generate speech with the fast profile:
 
 ```bash
 tts-qwen-local synth --profile fast --text "Hello from Qwen three TTS."
+```
+
+Force the Apple-native backend explicitly:
+
+```bash
+tts-qwen-local synth --profile fast --backend mlx --text "Hello from Qwen three TTS."
 ```
 
 Generate from a file:
@@ -113,8 +134,10 @@ tts-qwen-local synth --preset study-fast --input input.txt
 
 - The default device is `auto`, which resolves to `mps` on Apple Silicon when available.
 - The default dtype is `auto`, which prefers `bfloat16` on MPS and falls back to `float32` if generation becomes unstable.
+- If `../.venv-mlx-audio/bin/python` or `TTS_QWEN_MLX_PYTHON` exists, `auto` resolves to the MLX backend on Apple Silicon.
 - `fast` is the practical everyday option on this machine.
 - The default MPS chunking is intentionally smaller than the original prototype because batched smaller chunks were measurably faster on this Mac.
+- In local testing, the MLX fast path was materially faster than the PyTorch MPS path for the same `fast` profile.
 - `quality` and `design` are slower and should be treated as deliberate higher-quality runs.
 - Quantized CUDA-style acceleration is intentionally not part of this v1 project.
 
