@@ -108,6 +108,12 @@ Run a benchmark:
 tts-qwen-local bench --profile fast --text "Benchmark this."
 ```
 
+Write a per-run trace record:
+
+```bash
+tts-qwen-local synth --profile fast --text "Trace this." --trace-json traces.jsonl
+```
+
 ## Presets
 
 The project reads `presets.yaml` from the repo root by default if it exists. You can also pass `--config path/to/presets.yaml`.

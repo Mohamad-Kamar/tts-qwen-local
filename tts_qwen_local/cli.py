@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+import time
 from pathlib import Path
 
 from .audio import infer_audio_format, resolve_output_path, write_audio_file
@@ -78,6 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("wav", "mp3", "m4a", "aac", "flac", "opus"),
         help="Output audio format. Defaults to the output file suffix or wav.",
     )
+    synth.add_argument("--trace-json", type=Path, help="Append a JSON trace record for this run.")
     synth.add_argument("--show-settings", action="store_true", help="Print resolved settings.")
 
     clone = subparsers.add_parser("clone", help="Clone a voice from reference audio.")
@@ -96,6 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("wav", "mp3", "m4a", "aac", "flac", "opus"),
         help="Output audio format. Defaults to the output file suffix or wav.",
     )
+    clone.add_argument("--trace-json", type=Path, help="Append a JSON trace record for this run.")
     clone.add_argument("--show-settings", action="store_true", help="Print resolved settings.")
 
     bench = subparsers.add_parser("bench", help="Benchmark cold and warm synthesis times.")
@@ -201,6 +205,7 @@ def _cmd_preload(args: argparse.Namespace) -> int:
 
 
 def _cmd_synth(args: argparse.Namespace) -> int:
+    total_start = time.perf_counter()
     profile = get_profile(args.profile)
     validate_synth_options(profile, args.voice, args.instruct)
     text = _load_input_text(args)
@@ -243,9 +248,36 @@ def _cmd_synth(args: argparse.Namespace) -> int:
             ),
             on_progress=_progress_printer,
         )
+        write_start = time.perf_counter()
         write_audio_file(output_path, result.audio, result.sample_rate, audio_format)
+        write_elapsed = time.perf_counter() - write_start
 
         duration = len(result.audio) / result.sample_rate
+        if args.trace_json:
+            _write_trace_json(
+                args.trace_json,
+                {
+                    "command": "synth",
+                    "backend": backend.name,
+                    "profile": profile.name,
+                    "model_id": result.model_id,
+                    "device": backend.device,
+                    "dtype": result.dtype,
+                    "chars": len(text),
+                    "chunk_chars": chunk_chars,
+                    "chunk_count": len(result.chunks),
+                    "audio_duration_sec": duration,
+                    "elapsed_sec": result.elapsed_sec,
+                    "rtf": _safe_rtf(result.elapsed_sec, duration),
+                    "phases": {
+                        "backend_call_sec": result.elapsed_sec,
+                        "audio_write_sec": write_elapsed,
+                        "total_cli_sec": time.perf_counter() - total_start,
+                    },
+                    "output": str(output_path),
+                    "format": audio_format,
+                },
+            )
         print(
             f"Wrote {output_path} in {result.elapsed_sec:.2f}s "
             f"({duration:.2f}s audio, {len(result.chunks)} chunks, profile={profile.name}, backend={backend.name}, device={backend.device}, dtype={result.dtype})."
@@ -256,6 +288,7 @@ def _cmd_synth(args: argparse.Namespace) -> int:
 
 
 def _cmd_clone(args: argparse.Namespace) -> int:
+    total_start = time.perf_counter()
     profile = get_profile(args.profile)
     validate_clone_options(profile, args.reference, args.ref_text, args.x_vector_only_mode)
     text = _load_input_text(args)
@@ -301,9 +334,37 @@ def _cmd_clone(args: argparse.Namespace) -> int:
             ),
             on_progress=_progress_printer,
         )
+        write_start = time.perf_counter()
         write_audio_file(output_path, result.audio, result.sample_rate, audio_format)
+        write_elapsed = time.perf_counter() - write_start
 
         duration = len(result.audio) / result.sample_rate
+        if args.trace_json:
+            _write_trace_json(
+                args.trace_json,
+                {
+                    "command": "clone",
+                    "backend": backend.name,
+                    "profile": profile.name,
+                    "model_id": result.model_id,
+                    "device": backend.device,
+                    "dtype": result.dtype,
+                    "chars": len(text),
+                    "chunk_chars": chunk_chars,
+                    "chunk_count": len(result.chunks),
+                    "audio_duration_sec": duration,
+                    "elapsed_sec": result.elapsed_sec,
+                    "rtf": _safe_rtf(result.elapsed_sec, duration),
+                    "phases": {
+                        "backend_call_sec": result.elapsed_sec,
+                        "audio_write_sec": write_elapsed,
+                        "total_cli_sec": time.perf_counter() - total_start,
+                    },
+                    "reference": str(args.reference),
+                    "output": str(output_path),
+                    "format": audio_format,
+                },
+            )
         print(
             f"Wrote {output_path} in {result.elapsed_sec:.2f}s "
             f"({duration:.2f}s audio, {len(result.chunks)} chunks, profile={profile.name}, backend={backend.name}, device={backend.device}, dtype={result.dtype})."
@@ -464,6 +525,18 @@ def _print_settings(values: dict[str, object]) -> None:
     print("Resolved settings:", file=sys.stderr)
     for key, value in values.items():
         print(f"  {key}: {value}", file=sys.stderr)
+
+
+def _write_trace_json(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=True) + "\n")
+
+
+def _safe_rtf(elapsed_sec: float, duration_sec: float) -> float | None:
+    if duration_sec <= 0:
+        return None
+    return elapsed_sec / duration_sec
 
 
 if __name__ == "__main__":
