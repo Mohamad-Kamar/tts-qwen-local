@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tts-qwen-local"
+version = "0.1.0"
+description = "Offline-first local TTS CLI and library for Qwen3-TTS"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "qwen-tts==0.1.1",
+    "soundfile>=0.13.1",
+    "PyYAML>=6.0.2",
+    "huggingface-hub>=0.32.0",
+]
+
+[project.scripts]
+tts-qwen-local = "tts_qwen_local.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["tts_qwen_local*"]

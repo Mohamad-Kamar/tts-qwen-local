@@ -1,0 +1,21 @@
+presets:
+  study-fast:
+    profile: fast
+    voice: Ryan
+    language: en
+    format: wav
+    chunk_chars: 120
+
+  study-quality:
+    profile: quality
+    voice: Ryan
+    language: en
+    format: wav
+    chunk_chars: 140
+
+  study-design-calm:
+    profile: design
+    language: en
+    format: wav
+    chunk_chars: 140
+    instruct: "Calm, clear, steady educational narration with warm pacing."
