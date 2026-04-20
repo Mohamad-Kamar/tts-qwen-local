@@ -50,25 +50,57 @@ def chunk_text(text: str, max_chars: int) -> list[str]:
 
     preprocessed = preprocess_text(normalized)
     paragraphs = [part.strip() for part in PARAGRAPH_RE.split(preprocessed) if part.strip()]
+    pieces: list[tuple[str, bool]] = []
+
+    for paragraph_index, paragraph in enumerate(paragraphs):
+        paragraph_chunks = _chunk_paragraph(paragraph, max_chars)
+        for chunk_index, piece in enumerate(paragraph_chunks):
+            pieces.append((piece, paragraph_index > 0 and chunk_index == 0))
+
+    return _merge_tiny_tail(_pack_pieces(pieces, max_chars=max_chars), max_chars=max_chars)
+
+
+def _chunk_paragraph(paragraph: str, max_chars: int) -> list[str]:
+    sentences = [part.strip() for part in SENTENCE_RE.split(paragraph) if part.strip()]
     chunks: list[str] = []
+    current = ""
 
-    for paragraph in paragraphs:
-        sentences = [part.strip() for part in SENTENCE_RE.split(paragraph) if part.strip()]
-        current = ""
+    for sentence in sentences:
+        for piece in _split_oversized(sentence, max_chars):
+            candidate = piece if not current else f"{current} {piece}"
+            if current and len(candidate) > max_chars:
+                chunks.append(current)
+                current = piece
+            else:
+                current = candidate
 
-        for sentence in sentences:
-            for piece in _split_oversized(sentence, max_chars):
-                candidate = piece if not current else f"{current} {piece}"
-                if current and len(candidate) > max_chars:
-                    chunks.append(current)
-                    current = piece
-                else:
-                    current = candidate
+    if current:
+        chunks.append(current)
 
-        if current:
+    return chunks
+
+
+def _pack_pieces(pieces: list[tuple[str, bool]], max_chars: int) -> list[str]:
+    chunks: list[str] = []
+    current = ""
+
+    for piece, starts_new_paragraph in pieces:
+        if not current:
+            current = piece
+            continue
+
+        separator = "\n\n" if starts_new_paragraph else " "
+        candidate = f"{current}{separator}{piece}"
+        if len(candidate) > max_chars:
             chunks.append(current)
+            current = piece
+        else:
+            current = candidate
 
-    return _merge_tiny_tail(chunks, max_chars=max_chars)
+    if current:
+        chunks.append(current)
+
+    return chunks
 
 
 def _split_oversized(text: str, max_chars: int) -> list[str]:

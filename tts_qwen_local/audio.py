@@ -11,6 +11,8 @@ import soundfile as sf
 
 from .config import DEFAULT_OUTPUT_STEM, SUPPORTED_AUDIO_FORMATS
 
+DEFAULT_CROSSFADE_MS = 12
+
 
 def infer_audio_format(output: str | Path | None, requested_format: str | None) -> str:
     if requested_format:
@@ -83,3 +85,37 @@ def encode_audio_bytes(audio: np.ndarray, sample_rate: int, audio_format: str = 
         output_path = Path(tmp_dir) / f"audio.{audio_format}"
         write_audio_file(output_path, audio, sample_rate, audio_format)
         return output_path.read_bytes()
+
+
+def concat_audio_segments(
+    audio_segments: list[np.ndarray],
+    sample_rate: int,
+    *,
+    crossfade_ms: int = DEFAULT_CROSSFADE_MS,
+) -> np.ndarray:
+    if not audio_segments:
+        return np.array([], dtype=np.float32)
+
+    prepared = [np.asarray(segment, dtype=np.float32).reshape(-1).copy() for segment in audio_segments]
+    if len(prepared) == 1:
+        return prepared[0]
+
+    crossfade_samples = max(int(sample_rate * (crossfade_ms / 1000.0)), 0)
+    parts = [prepared[0]]
+
+    for segment in prepared[1:]:
+        previous = parts[-1]
+        overlap = min(crossfade_samples, len(previous), len(segment))
+        if overlap <= 0:
+            parts.append(segment)
+            continue
+
+        fade_out = np.linspace(1.0, 0.0, overlap, dtype=np.float32)
+        fade_in = np.linspace(0.0, 1.0, overlap, dtype=np.float32)
+        mixed = (previous[-overlap:] * fade_out) + (segment[:overlap] * fade_in)
+        parts[-1] = previous[:-overlap]
+        parts.append(mixed)
+        if overlap < len(segment):
+            parts.append(segment[overlap:])
+
+    return np.concatenate(parts) if parts else np.array([], dtype=np.float32)

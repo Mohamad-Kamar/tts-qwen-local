@@ -4,20 +4,21 @@ presets:
   study-fast:
     profile: fast
     backend: mlx
-    voice: Uncle_Fu
+    voice: Ryan
     language: en
     format: wav
-    chunk_chars: 450
+    chunk_chars: 900
 
   # Use this when you explicitly want a stronger preset speaker and can accept
   # a slower run than study-fast.
   study-quality:
     profile: quality
     backend: mlx
-    voice: Uncle_Fu
+    voice: Ryan
     language: en
     format: wav
-    chunk_chars: 400
+    chunk_chars: 900
+    instruct: "Deep, calm, mature male narrator with warm resonance, clear diction, measured pacing, and steady educational delivery."
 
   # Design mode requires an instruction string. Keep this as a deliberate,
   # slower preset rather than the default everyday path.
@@ -26,5 +27,15 @@ presets:
     backend: mlx
     language: en
     format: wav
-    chunk_chars: 400
+    chunk_chars: 900
     instruct: "Calm, clear, steady educational narration with warm pacing."
+
+  # Use this when you want a deeper, more authoritative lesson narrator without
+  # imitating a real person.
+  study-lesson-narrator:
+    profile: design
+    backend: mlx
+    language: en
+    format: wav
+    chunk_chars: 900
+    instruct: "Deep, calm, mature male narrator with warm resonance, measured pacing, clear diction, and steady educational delivery for long educational lessons."

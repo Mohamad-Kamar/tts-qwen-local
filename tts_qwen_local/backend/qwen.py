@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 from huggingface_hub import snapshot_download
 
+from ..audio import concat_audio_segments
 from ..config import (
     CUSTOMVOICE_SPEAKERS,
     TOKENIZER_MODEL_ID,
@@ -136,7 +137,7 @@ class QwenBackend:
         generate_elapsed = time.perf_counter() - generate_start
 
         concat_start = time.perf_counter()
-        final_audio = _concat_audio(_extract_audio_segments(wavs))
+        final_audio = concat_audio_segments(_extract_audio_segments(wavs), sample_rate=sample_rate)
         concat_elapsed = time.perf_counter() - concat_start
         return SynthesisResult(
             audio=final_audio,
@@ -189,7 +190,7 @@ class QwenBackend:
         generate_elapsed = time.perf_counter() - generate_start
 
         concat_start = time.perf_counter()
-        final_audio = _concat_audio(_extract_audio_segments(wavs))
+        final_audio = concat_audio_segments(_extract_audio_segments(wavs), sample_rate=sample_rate)
         concat_elapsed = time.perf_counter() - concat_start
         return SynthesisResult(
             audio=final_audio,
@@ -395,11 +396,3 @@ def _extract_audio_segments(wavs: Any) -> list[np.ndarray]:
 def _canonicalize_voice_name(voice: str) -> str:
     known = {name.lower(): name for name in CUSTOMVOICE_SPEAKERS}
     return known.get(voice.lower(), voice)
-
-
-def _concat_audio(audio_segments: list[np.ndarray]) -> np.ndarray:
-    if not audio_segments:
-        return np.array([], dtype=np.float32)
-    if len(audio_segments) == 1:
-        return audio_segments[0]
-    return np.concatenate(audio_segments)

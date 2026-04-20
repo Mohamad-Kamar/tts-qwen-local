@@ -36,3 +36,9 @@ class TextTests(unittest.TestCase):
         text = "A very long sentence that should mostly fit in one chunk but leave a short tail. End."
         chunks = chunk_text(text, 75)
         self.assertLessEqual(len(chunks), 2)
+
+    def test_chunk_text_can_merge_adjacent_paragraphs(self):
+        text = "First paragraph explains the setup.\n\nSecond paragraph keeps the same idea going."
+        chunks = chunk_text(text, 120)
+        self.assertEqual(len(chunks), 1)
+        self.assertIn("\n\n", chunks[0])

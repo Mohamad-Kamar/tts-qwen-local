@@ -5,7 +5,12 @@ from pathlib import Path
 
 import numpy as np
 
-from tts_qwen_local.audio import encode_audio_bytes, infer_audio_format, resolve_output_path
+from tts_qwen_local.audio import (
+    concat_audio_segments,
+    encode_audio_bytes,
+    infer_audio_format,
+    resolve_output_path,
+)
 
 
 class AudioTests(unittest.TestCase):
@@ -27,3 +32,10 @@ class AudioTests(unittest.TestCase):
         audio = np.zeros(240, dtype=np.float32)
         payload = encode_audio_bytes(audio, 24000, audio_format="wav")
         self.assertTrue(payload.startswith(b"RIFF"))
+
+    def test_concat_audio_segments_crossfades(self):
+        left = np.ones(240, dtype=np.float32)
+        right = np.ones(240, dtype=np.float32) * 0.5
+        mixed = concat_audio_segments([left, right], 24000, crossfade_ms=5)
+        self.assertGreater(len(mixed), 240)
+        self.assertLess(len(mixed), 480)

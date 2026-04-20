@@ -105,9 +105,24 @@ Chunk size is not universally “bigger is better”.
 Practical rules:
 
 - start with the shipped preset values
+- prefer fewer, larger long-form chunks on MLX so the narrator resets less often
 - keep `fast` near the tested MLX defaults unless you have evidence to change it
 - compare chunk sizes on the same power state and backend before deciding
 - keep clone chunking fixed while comparing clone variants, otherwise the benchmark becomes noisy
+
+## Voice Guidance
+
+For English study audio:
+
+- start with `Ryan` for preset-speaker runs
+- avoid using `Uncle_Fu` as the English default unless you explicitly want that accent and character
+- use `study-quality` when you want a deeper, steadier preset-style narrator
+- use `study-lesson-narrator` when you want the deeper “wise lesson narrator” path without trying to imitate a real person
+
+If you are chasing a very specific narrator character, move from `fast` to either:
+
+- `study-quality`, which adds stronger narrator-style instruction to a preset speaker
+- `study-lesson-narrator`, which uses `VoiceDesign` for the most direct style control
 
 ## Tracing And Benchmarking
 

@@ -14,6 +14,7 @@ import numpy as np
 from mlx_audio.tts.utils import get_model_path, load
 from mlx_audio.utils import load_audio
 
+from ..audio import concat_audio_segments
 
 class WorkerState:
     def __init__(self) -> None:
@@ -120,7 +121,7 @@ def _synthesize(state: WorkerState, params: dict[str, Any]) -> dict[str, Any]:
 
     model_generate_elapsed = time.perf_counter() - generation_start
     concat_start = time.perf_counter()
-    audio = _concat_results(results)
+    audio = _concat_results(results, sample_rate=int(model.sample_rate))
     concat_elapsed = time.perf_counter() - concat_start
     write_start = time.perf_counter()
     audio_path = _write_temp_array(audio)
@@ -176,7 +177,7 @@ def _clone(state: WorkerState, params: dict[str, Any]) -> dict[str, Any]:
 
     model_generate_elapsed = time.perf_counter() - generation_start
     concat_start = time.perf_counter()
-    audio = np.concatenate(audio_parts) if audio_parts else np.array([], dtype=np.float32)
+    audio = concat_audio_segments(audio_parts, int(model.sample_rate))
     concat_elapsed = time.perf_counter() - concat_start
     write_start = time.perf_counter()
     audio_path = _write_temp_array(audio)
@@ -200,17 +201,13 @@ def _clone(state: WorkerState, params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _concat_results(results: list[Any]) -> np.ndarray:
+def _concat_results(results: list[Any], sample_rate: int) -> np.ndarray:
     audio_parts: list[np.ndarray] = []
     for result in results:
         audio = np.asarray(result.audio, dtype=np.float32).reshape(-1)
         if audio.size:
             audio_parts.append(audio)
-    if not audio_parts:
-        return np.array([], dtype=np.float32)
-    if len(audio_parts) == 1:
-        return audio_parts[0]
-    return np.concatenate(audio_parts)
+    return concat_audio_segments(audio_parts, sample_rate)
 
 
 def _write_temp_array(audio: np.ndarray) -> Path:

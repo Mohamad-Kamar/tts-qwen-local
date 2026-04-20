@@ -87,18 +87,18 @@ PROFILE_MAP: dict[str, ProfileSpec] = {
         model_id="Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
         model_type="CustomVoice",
         description="Fastest daily-use preset on Apple Silicon.",
-        default_voice="Uncle_Fu",
+        default_voice="Ryan",
         chunk_chars_mps=120,
-        chunk_chars_other=450,
+        chunk_chars_other=900,
     ),
     "quality": ProfileSpec(
         name="quality",
         model_id="Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
         model_type="CustomVoice",
         description="Higher-quality preset speaker generation.",
-        default_voice="Uncle_Fu",
+        default_voice="Ryan",
         chunk_chars_mps=140,
-        chunk_chars_other=400,
+        chunk_chars_other=900,
     ),
     "design": ProfileSpec(
         name="design",
@@ -107,7 +107,7 @@ PROFILE_MAP: dict[str, ProfileSpec] = {
         description="Free-form voice design from natural-language instructions.",
         default_voice=None,
         chunk_chars_mps=140,
-        chunk_chars_other=400,
+        chunk_chars_other=900,
     ),
     "clone-fast": ProfileSpec(
         name="clone-fast",
@@ -116,7 +116,7 @@ PROFILE_MAP: dict[str, ProfileSpec] = {
         description="Smaller cloning profile for offline use.",
         default_voice=None,
         chunk_chars_mps=140,
-        chunk_chars_other=400,
+        chunk_chars_other=700,
     ),
     "clone-quality": ProfileSpec(
         name="clone-quality",
@@ -125,7 +125,7 @@ PROFILE_MAP: dict[str, ProfileSpec] = {
         description="Higher-quality cloning profile.",
         default_voice=None,
         chunk_chars_mps=120,
-        chunk_chars_other=360,
+        chunk_chars_other=650,
     ),
 }
 

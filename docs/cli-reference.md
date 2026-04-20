@@ -8,6 +8,12 @@ tts-qwen-local synth
 
 That reads `input.txt` and writes `output.wav`.
 
+Top-level options such as `--preset` and `--config` must come before the subcommand:
+
+```bash
+tts-qwen-local --preset study-fast synth --input input.txt
+```
+
 ## Commands
 
 ### `models`

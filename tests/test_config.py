@@ -76,9 +76,9 @@ class ConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir) / "presets.yaml"
             path.write_text(
-                "presets:\n  sample:\n    profile: fast\n    voice: Uncle_Fu\n",
+                "presets:\n  sample:\n    profile: fast\n    voice: Ryan\n",
                 encoding="utf-8",
             )
             presets = load_presets(path)
             self.assertIn("sample", presets)
-            self.assertEqual(presets["sample"]["voice"], "Uncle_Fu")
+            self.assertEqual(presets["sample"]["voice"], "Ryan")

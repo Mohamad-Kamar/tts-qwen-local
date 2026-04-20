@@ -172,14 +172,14 @@ with QwenTTSService(backend="auto") as tts:
         SynthesisOptions(
             text="Hello from the reusable Qwen TTS service.",
             profile="fast",
-            voice="Uncle_Fu",
+            voice="Ryan",
         )
     )
     wav_bytes = tts.synthesize_to_bytes(
         SynthesisOptions(
             text="Return WAV bytes for another app.",
             profile="fast",
-            voice="Uncle_Fu",
+            voice="Ryan",
         )
     )
 ```
@@ -190,8 +190,16 @@ For integration details, see [docs/library-api.md](docs/library-api.md).
 
 Use `presets.yaml` for named defaults when you want a stable study workflow without retyping the same flags every time.
 
+`--preset` is a top-level flag, so place it before the command name.
+
 ```bash
-tts-qwen-local synth --preset study-fast --input input.txt
+tts-qwen-local --preset study-fast synth --input input.txt
+```
+
+For a deeper lesson-style narrator, start with:
+
+```bash
+tts-qwen-local --preset study-lesson-narrator synth --input input.txt
 ```
 
 ## Output
