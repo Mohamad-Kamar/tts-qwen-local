@@ -3,7 +3,9 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from tts_qwen_local.audio import infer_audio_format, resolve_output_path
+import numpy as np
+
+from tts_qwen_local.audio import encode_audio_bytes, infer_audio_format, resolve_output_path
 
 
 class AudioTests(unittest.TestCase):
@@ -20,3 +22,8 @@ class AudioTests(unittest.TestCase):
     def test_resolve_output_path_adds_suffix(self):
         path = resolve_output_path(Path("voice"), "mp3")
         self.assertEqual(path.name, "voice.mp3")
+
+    def test_encode_audio_bytes_wav(self):
+        audio = np.zeros(240, dtype=np.float32)
+        payload = encode_audio_bytes(audio, 24000, audio_format="wav")
+        self.assertTrue(payload.startswith(b"RIFF"))

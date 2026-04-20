@@ -1,59 +1,53 @@
 # tts-qwen-local
 
-`tts-qwen-local` is an offline-first CLI and library for local `Qwen3-TTS` speech generation.
+Local `Qwen3-TTS` CLI and Python library.
 
-It keeps the same simple contract as `tts-local`: give it text, get an audio file back. The difference is that this project is built around the `Qwen3-TTS` model family and supports both the original PyTorch runtime and an Apple Silicon-native MLX runtime.
+This repo is for one job: take text, generate speech locally, and keep the workflow simple enough to use every day.
 
-## Best Default
+## What You Get
 
-On Apple Silicon, the practical default is:
+- local `Qwen3-TTS` generation
+- straightforward CLI defaults
+- preset voices, voice design, and voice cloning
+- Apple Silicon MLX support
+- original PyTorch `qwen-tts` support
+- reusable library API for app integration
+- benchmarking and tracing tools
 
-- backend: `auto -> mlx` when an MLX Python is available
+## When To Use This Repo
+
+Use `tts-qwen-local` when you want the local Qwen path.
+
+- use this repo for local `Qwen3-TTS`, especially on Apple Silicon with MLX
+- use `tts-local` when you want the existing Kokoro-based local path
+- use `tts-cloud` when you want API-backed speech generation
+
+## Who This Is For
+
+Use this repo if you want:
+
+- local text-to-speech with no required cloud dependency
+- a CLI that stays close to the “input text, get audio file” workflow
+- a Python service object another app can hold onto and reuse
+- access to preset voices, design mode, and clone mode in one project
+
+## Requirements
+
+- Python `3.12` is recommended
+- Apple Silicon is optional, but it is the best-supported path for this repo today because of MLX
+- `ffmpeg` is optional and only needed for non-`wav` output such as `mp3`, `m4a`, `aac`, `flac`, or `opus`
+
+## Current Recommendation
+
+On Apple Silicon, start here:
+
+- backend: `auto` or `mlx`
 - profile: `fast`
 - output: `wav`
 
-That is the path this repo is optimized around.
-
-## Default Flow
-
-With no input flags:
-
-```bash
-tts-qwen-local synth
-```
-
-That reads `input.txt` and writes `output.wav`.
-
-Input priority is:
-
-- `--text`
-- `--stdin`
-- `--input input.txt`
-
-Output rules are:
-
-- default output path is `output.<format>` (`output.wav` unless you explicitly set `--format`)
-- `--output name` adds the requested format suffix if needed
-- `--format` defaults to the file suffix, otherwise `wav`
-
-## Profiles
-
-- `fast`: daily-use preset voice generation
-- `quality`: slower but stronger preset voice generation
-- `design`: voice design from a natural-language instruction
-- `clone-fast`: smaller cloning profile
-- `clone-quality`: larger cloning profile
-
-Use these rules:
-
-- use `fast` for routine study audio
-- use `quality` when you want a better preset voice and can wait longer
-- use `design` only when you want to describe the voice/persona
-- use `clone-*` only when you have a reference clip
+If the machine is on battery or running hot, compare `quality`. In the later MLX measurements, `quality` was more stable than `fast` on longer text.
 
 ## Install
-
-Python 3.12 is recommended.
 
 Main project environment:
 
@@ -63,7 +57,7 @@ source .venv/bin/activate
 python -m pip install -e .
 ```
 
-Optional Apple Silicon MLX environment:
+Optional MLX environment for Apple Silicon:
 
 ```bash
 python3.12 -m venv ../.venv-mlx-audio
@@ -75,16 +69,24 @@ If `../.venv-mlx-audio/bin/python` exists, `backend=auto` will prefer MLX on App
 
 ## Quick Start
 
-List profiles:
+Default flow:
 
 ```bash
-tts-qwen-local models
+tts-qwen-local synth
 ```
 
-List MLX variants for one profile:
+That reads `input.txt` and writes `output.wav`.
+
+Generate from inline text:
 
 ```bash
-tts-qwen-local variants --profile fast
+tts-qwen-local synth --profile fast --text "Hello from Qwen three TTS."
+```
+
+Generate from a file:
+
+```bash
+tts-qwen-local synth --profile fast --input input.txt --output output.wav
 ```
 
 List voices:
@@ -93,43 +95,13 @@ List voices:
 tts-qwen-local voices --profile fast
 ```
 
-Generate speech from inline text:
+Preload a model:
 
 ```bash
-tts-qwen-local synth --profile fast --text "Hello from Qwen three TTS."
+tts-qwen-local preload --profile fast
 ```
 
-Generate speech from a file:
-
-```bash
-tts-qwen-local synth --profile fast --input input.txt --output output.wav
-```
-
-Force the Apple-native runtime:
-
-```bash
-tts-qwen-local synth --profile fast --backend mlx --text "Hello from Qwen three TTS."
-```
-
-Choose an MLX variant directly:
-
-```bash
-tts-qwen-local synth \
-  --profile fast \
-  --backend mlx \
-  --mlx-variant 8bit \
-  --text "Compare this against the default MLX variant."
-```
-
-Point MLX at a specific local model directory or repo id:
-
-```bash
-tts-qwen-local synth \
-  --profile fast \
-  --backend mlx \
-  --mlx-model mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-6bit \
-  --text "Use an explicit MLX model."
-```
+## Common Workflows
 
 Use voice design:
 
@@ -140,7 +112,7 @@ tts-qwen-local synth \
   --text "This is a design-mode example."
 ```
 
-Clone a voice:
+Clone from a reference clip:
 
 ```bash
 tts-qwen-local clone \
@@ -160,54 +132,67 @@ tts-qwen-local clone \
   --text "Clone this without transcript conditioning."
 ```
 
-Preload a model:
-
-```bash
-tts-qwen-local preload --profile fast
-```
-
-Benchmark synthesis:
+Benchmark a profile:
 
 ```bash
 tts-qwen-local bench --profile fast --text "Benchmark this."
 ```
 
-Benchmark cloning:
+## Profiles
 
-```bash
-tts-qwen-local bench-clone \
-  --profile clone-fast \
-  --reference voice.wav \
-  --ref-text "This is the reference speech." \
-  --text "Benchmark this clone path."
+- `fast`: everyday preset-voice synthesis
+- `quality`: slower preset-voice synthesis with stronger results
+- `design`: voice design from a natural-language instruction
+- `clone-fast`: smaller cloning profile
+- `clone-quality`: larger cloning profile
+
+Practical guidance:
+
+- start with `fast`
+- compare `quality` if you want better output or if `fast` is unstable under current power or thermal conditions
+- use `design` when you want a described persona, not just a preset speaker
+- use `clone-fast` before `clone-quality`
+
+## Library Usage
+
+`tts-qwen-local` can be embedded as a reusable library. The main entrypoint is `QwenTTSService`, which keeps a backend alive across calls instead of paying full startup cost on every request.
+
+```python
+from tts_qwen_local import QwenTTSService, SynthesisOptions
+
+with QwenTTSService(backend="auto") as tts:
+    tts.preload("fast")
+    result = tts.synthesize(
+        SynthesisOptions(
+            text="Hello from the reusable Qwen TTS service.",
+            profile="fast",
+            voice="Ryan",
+        )
+    )
+    wav_bytes = tts.synthesize_to_bytes(
+        SynthesisOptions(
+            text="Return WAV bytes for another app.",
+            profile="fast",
+            voice="Ryan",
+        )
+    )
 ```
 
-Write a trace record:
-
-```bash
-tts-qwen-local synth \
-  --profile fast \
-  --text "Trace this." \
-  --trace-json traces.jsonl
-```
+For integration details, see [docs/library-api.md](docs/library-api.md).
 
 ## Presets
 
-The repo reads `presets.yaml` by default. You can also pass `--config path/to/presets.yaml`.
-
-Use a preset like this:
+Use `presets.yaml` for named defaults when you want a stable study workflow without retyping the same flags every time.
 
 ```bash
 tts-qwen-local synth --preset study-fast --input input.txt
 ```
 
-The shipped presets are MLX-oriented on Apple Silicon and use chunk sizes that measured well on this Mac.
-
-## Output Formats
+## Output
 
 Default output is `wav`.
 
-With `ffmpeg`, the CLI can also write:
+With `ffmpeg`, the CLI and library can also write:
 
 - `mp3`
 - `m4a`
@@ -217,21 +202,12 @@ With `ffmpeg`, the CLI can also write:
 
 Without `ffmpeg`, non-WAV output fails with a clear error.
 
-## Apple Silicon Notes
-
-- `backend=auto` prefers `mlx` if an MLX Python exists
-- `device` matters for the PyTorch backend; MLX always reports `device=mlx`
-- `dtype` is mainly a PyTorch control; MLX tuning is done through `--mlx-variant` or `--mlx-model`
-- `fast` is the practical everyday profile on this machine class
-- if the machine is on battery or running hot, compare `quality`; the later battery-state measurements were more stable there
-- `quality`, `design`, and clone modes are deliberate slower runs
-- power state matters for measurements, so compare runs on the same charger/battery state when possible
-
 ## Docs
 
-- [CLI Reference](docs/cli-reference.md)
-- [Tuning Guide](docs/tuning-guide.md)
-- [Performance Results](docs/performance-results.md)
+- [CLI Reference](docs/cli-reference.md): commands and flags
+- [Library API](docs/library-api.md): reusable service-layer usage
+- [Tuning Guide](docs/tuning-guide.md): backend and model tuning
+- [Performance Results](docs/performance-results.md): measured results and tradeoffs
 
 ## Testing
 

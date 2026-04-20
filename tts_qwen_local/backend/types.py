@@ -7,13 +7,15 @@ from typing import Any
 
 import numpy as np
 
+from ..config import ProfileSpec
+
 ProgressCallback = Callable[[int, int, str], None]
 
 
 @dataclass(frozen=True, slots=True)
 class SynthesisRequest:
     text: str
-    profile: object
+    profile: ProfileSpec
     language: str = "auto"
     voice: str | None = None
     instruct: str | None = None
@@ -23,7 +25,7 @@ class SynthesisRequest:
 @dataclass(frozen=True, slots=True)
 class CloneRequest:
     text: str
-    profile: object
+    profile: ProfileSpec
     reference_audio: Path
     reference_text: str | None = None
     x_vector_only_mode: bool = False

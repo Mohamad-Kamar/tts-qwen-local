@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import shutil
 import subprocess
 import tempfile
@@ -70,3 +71,15 @@ def write_audio_file(output_path: Path, audio: np.ndarray, sample_rate: int, aud
             raise RuntimeError(f"ffmpeg conversion failed: {stderr}")
     finally:
         temp_wav.unlink(missing_ok=True)
+
+
+def encode_audio_bytes(audio: np.ndarray, sample_rate: int, audio_format: str = "wav") -> bytes:
+    if audio_format == "wav":
+        buffer = io.BytesIO()
+        sf.write(buffer, audio, sample_rate, format="WAV")
+        return buffer.getvalue()
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        output_path = Path(tmp_dir) / f"audio.{audio_format}"
+        write_audio_file(output_path, audio, sample_rate, audio_format)
+        return output_path.read_bytes()
