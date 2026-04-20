@@ -125,7 +125,7 @@ result = tts.synthesize(
     SynthesisOptions(
         text="Hello from a reused service.",
         profile="fast",
-        voice="Ryan",
+        voice="Uncle_Fu",
     )
 )
 
@@ -142,7 +142,7 @@ with QwenTTSService(backend="auto") as tts:
         SynthesisOptions(
             text="Hello from a context-managed service.",
             profile="fast",
-            voice="Ryan",
+            voice="Uncle_Fu",
         )
     )
 ```
@@ -157,7 +157,7 @@ with create_service(backend="auto") as tts:
         SynthesisOptions(
             text="Create the service through the helper.",
             profile="fast",
-            voice="Ryan",
+            voice="Uncle_Fu",
         )
     )
 ```
@@ -172,7 +172,7 @@ with QwenTTSService(backend="auto") as tts:
         SynthesisOptions(
             text="Return bytes for another application.",
             profile="fast",
-            voice="Ryan",
+            voice="Uncle_Fu",
         )
     )
 ```
@@ -189,7 +189,7 @@ with QwenTTSService(backend="auto") as tts:
         SynthesisOptions(
             text="Write this straight to disk.",
             profile="fast",
-            voice="Ryan",
+            voice="Uncle_Fu",
         ),
         Path("output.wav"),
     )
@@ -224,7 +224,7 @@ with QwenTTSService(backend="auto") as tts:
         SynthesisOptions(
             text="A longer text that will be chunked before synthesis.",
             profile="fast",
-            voice="Ryan",
+            voice="Uncle_Fu",
         ),
         on_progress=on_progress,
     )

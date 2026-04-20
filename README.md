@@ -65,6 +65,9 @@ source ../.venv-mlx-audio/bin/activate
 python -m pip install -U mlx-audio
 ```
 
+This environment is only the MLX worker runtime. It does not install the `tts-qwen-local`
+CLI. Keep using the main project environment when you run `tts-qwen-local synth`.
+
 If `../.venv-mlx-audio/bin/python` exists, `backend=auto` will prefer MLX on Apple Silicon.
 
 ## Quick Start
@@ -72,10 +75,13 @@ If `../.venv-mlx-audio/bin/python` exists, `backend=auto` will prefer MLX on App
 Default flow:
 
 ```bash
+source .venv/bin/activate
 tts-qwen-local synth
 ```
 
 That reads `input.txt` and writes `output.wav`.
+
+In an interactive terminal, `synth` and `clone` show a live approximate ETA bar on stderr.
 
 Generate from inline text:
 
@@ -166,14 +172,14 @@ with QwenTTSService(backend="auto") as tts:
         SynthesisOptions(
             text="Hello from the reusable Qwen TTS service.",
             profile="fast",
-            voice="Ryan",
+            voice="Uncle_Fu",
         )
     )
     wav_bytes = tts.synthesize_to_bytes(
         SynthesisOptions(
             text="Return WAV bytes for another app.",
             profile="fast",
-            voice="Ryan",
+            voice="Uncle_Fu",
         )
     )
 ```

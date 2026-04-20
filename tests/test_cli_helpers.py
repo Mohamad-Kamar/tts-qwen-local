@@ -41,7 +41,7 @@ class CliHelperTests(unittest.TestCase):
             args,
             {
                 "profile": "quality",
-                "voice": "Ryan",
+                "voice": "Uncle_Fu",
                 "backend": "mlx",
                 "mlx_variant": "8bit",
                 "dtype": "bfloat16",
@@ -49,7 +49,7 @@ class CliHelperTests(unittest.TestCase):
             },
         )
         self.assertEqual(args.profile, "quality")
-        self.assertEqual(args.voice, "Ryan")
+        self.assertEqual(args.voice, "Uncle_Fu")
         self.assertEqual(args.backend, "mlx")
         self.assertEqual(args.mlx_variant, "8bit")
         self.assertEqual(args.dtype, "bfloat16")

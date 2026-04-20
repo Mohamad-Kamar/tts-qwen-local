@@ -4,7 +4,7 @@ presets:
   study-fast:
     profile: fast
     backend: mlx
-    voice: Ryan
+    voice: Uncle_Fu
     language: en
     format: wav
     chunk_chars: 450
@@ -14,7 +14,7 @@ presets:
   study-quality:
     profile: quality
     backend: mlx
-    voice: Ryan
+    voice: Uncle_Fu
     language: en
     format: wav
     chunk_chars: 400
