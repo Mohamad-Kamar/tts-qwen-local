@@ -29,7 +29,8 @@ from .config import (
     validate_clone_options,
     validate_synth_options,
 )
-from .text import normalize_text
+from .progress import EstimatedProgressTracker, estimate_generation_seconds
+from .text import chunk_text, normalize_text
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -275,6 +276,7 @@ def _cmd_synth(args: argparse.Namespace) -> int:
     audio_format = infer_audio_format(args.output, args.format)
     output_path = resolve_output_path(args.output, audio_format)
     chunk_chars = args.chunk_chars or default_chunk_chars(profile, backend.device)
+    progress: EstimatedProgressTracker | None = None
 
     try:
         _validate_mlx_selection_args(args, backend.name)
@@ -302,6 +304,18 @@ def _cmd_synth(args: argparse.Namespace) -> int:
                 }
             )
 
+        planned_chunks = chunk_text(text, chunk_chars)
+        estimated_seconds = estimate_generation_seconds(
+            backend.name,
+            profile.name,
+            len(text),
+            len(planned_chunks),
+        )
+        progress = EstimatedProgressTracker(
+            f"synth {profile.name}",
+            estimated_seconds,
+        )
+        progress.start()
         result = backend.synthesize(
             SynthesisRequest(
                 text=text,
@@ -311,7 +325,6 @@ def _cmd_synth(args: argparse.Namespace) -> int:
                 instruct=args.instruct,
                 chunk_chars=chunk_chars,
             ),
-            on_progress=_progress_printer,
         )
         write_start = time.perf_counter()
         write_audio_file(output_path, result.audio, result.sample_rate, audio_format)
@@ -350,6 +363,8 @@ def _cmd_synth(args: argparse.Namespace) -> int:
         )
         return 0
     finally:
+        if progress is not None:
+            progress.stop()
         backend.close()
 
 
@@ -370,6 +385,7 @@ def _cmd_clone(args: argparse.Namespace) -> int:
     audio_format = infer_audio_format(args.output, args.format)
     output_path = resolve_output_path(args.output, audio_format)
     chunk_chars = args.chunk_chars or default_chunk_chars(profile, backend.device)
+    progress: EstimatedProgressTracker | None = None
 
     try:
         _validate_mlx_selection_args(args, backend.name)
@@ -399,6 +415,18 @@ def _cmd_clone(args: argparse.Namespace) -> int:
                 }
             )
 
+        planned_chunks = chunk_text(text, chunk_chars)
+        estimated_seconds = estimate_generation_seconds(
+            backend.name,
+            profile.name,
+            len(text),
+            len(planned_chunks),
+        )
+        progress = EstimatedProgressTracker(
+            f"clone {profile.name}",
+            estimated_seconds,
+        )
+        progress.start()
         result = backend.clone(
             CloneRequest(
                 text=text,
@@ -409,7 +437,6 @@ def _cmd_clone(args: argparse.Namespace) -> int:
                 language=args.language or DEFAULT_LANGUAGE,
                 chunk_chars=chunk_chars,
             ),
-            on_progress=_progress_printer,
         )
         write_start = time.perf_counter()
         write_audio_file(output_path, result.audio, result.sample_rate, audio_format)
@@ -449,6 +476,8 @@ def _cmd_clone(args: argparse.Namespace) -> int:
         )
         return 0
     finally:
+        if progress is not None:
+            progress.stop()
         backend.close()
 
 
@@ -692,10 +721,6 @@ def _finalize_common_defaults(args: argparse.Namespace) -> None:
         args.backend = "auto"
     if hasattr(args, "mlx_variant") and args.mlx_variant is None:
         args.mlx_variant = "default"
-
-
-def _progress_printer(index: int, total: int, _chunk: str) -> None:
-    print(f"[chunk {index + 1}/{total}]", file=sys.stderr)
 
 
 def _print_settings(values: dict[str, object]) -> None:

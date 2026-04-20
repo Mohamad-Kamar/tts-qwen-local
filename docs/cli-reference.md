@@ -66,6 +66,7 @@ Profile rules:
 - `fast` and `quality` accept `--voice` and optional `--instruct`
 - `design` requires `--instruct` and does not accept `--voice`
 - clone profiles are not valid for `synth`
+- in interactive terminals, `synth` shows a live approximate ETA bar instead of per-chunk log lines
 
 ### `clone`
 
@@ -97,6 +98,7 @@ Rules:
 - `--ref-text` is recommended
 - `--x-vector-only-mode` is the fallback when you do not have the transcript
 - when `--x-vector-only-mode` is set, transcript-conditioned cloning is disabled and `--ref-text` is ignored
+- in interactive terminals, `clone` shows a live approximate ETA bar instead of per-chunk log lines
 
 ### `preload`
 
