@@ -14,6 +14,8 @@ def create_backend(
     device: str,
     dtype: str,
     mlx_python: str | None = None,
+    mlx_variant: str | None = None,
+    mlx_model: str | None = None,
 ) -> TTSBackend:
     resolved = resolve_backend_name(backend_name, device=device, mlx_python=mlx_python)
     if resolved == "mlx":
@@ -21,6 +23,8 @@ def create_backend(
             device=device,
             dtype=dtype,
             mlx_python=mlx_python or _default_mlx_python_str(),
+            mlx_variant=mlx_variant,
+            mlx_model=mlx_model,
         )
     return QwenBackend(device=device, dtype=dtype)
 

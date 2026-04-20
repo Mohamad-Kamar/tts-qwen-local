@@ -16,6 +16,7 @@ from ..config import (
     ProfileSpec,
     default_chunk_chars,
     default_mlx_python,
+    backend_model_id,
     mlx_model_id,
     normalize_language,
 )
@@ -26,12 +27,21 @@ from .types import CloneRequest, ProgressCallback, SynthesisRequest, SynthesisRe
 class MLXExternalBackend:
     name = "mlx"
 
-    def __init__(self, device: str = "auto", dtype: str = "auto", mlx_python: str | None = None):
+    def __init__(
+        self,
+        device: str = "auto",
+        dtype: str = "auto",
+        mlx_python: str | None = None,
+        mlx_variant: str | None = None,
+        mlx_model: str | None = None,
+    ):
         if device == "cuda":
             raise ValueError("The MLX backend does not support --device cuda.")
         self._device = "mlx"
         self._dtype_mode = dtype
         self._mlx_python = Path(mlx_python) if mlx_python else default_mlx_python()
+        self._mlx_variant = mlx_variant
+        self._mlx_model = mlx_model
         if self._mlx_python is None:
             raise ValueError(
                 "MLX backend requested but no MLX Python was found. "
@@ -39,6 +49,10 @@ class MLXExternalBackend:
             )
         self._process: subprocess.Popen[str] | None = None
         self._request_id = 0
+        self._last_process_trace: dict[str, Any] = {
+            "worker_process_reused": False,
+            "worker_process_start_sec": 0.0,
+        }
 
     @property
     def device(self) -> str:
@@ -49,12 +63,12 @@ class MLXExternalBackend:
         return self._dtype_mode
 
     def ensure_loaded(self, profile: ProfileSpec) -> None:
-        self._rpc("ensure_loaded", model_id=mlx_model_id(profile))
+        self._rpc("ensure_loaded", model_id=self.model_id_for_profile(profile))
 
     def preload(self, profile: ProfileSpec, include_tokenizer: bool = True) -> list[Path]:
         payload = self._rpc(
             "preload",
-            model_id=mlx_model_id(profile),
+            model_id=self.model_id_for_profile(profile),
             include_tokenizer=include_tokenizer,
         )
         return [Path(item) for item in payload["paths"]]
@@ -63,7 +77,7 @@ class MLXExternalBackend:
         if profile.model_type != "CustomVoice":
             raise ValueError(f"Profile '{profile.name}' does not support preset voices.")
 
-        payload = self._rpc("list_voices", model_id=mlx_model_id(profile))
+        payload = self._rpc("list_voices", model_id=self.model_id_for_profile(profile))
         voices = payload.get("voices") or []
         if voices:
             return [_canonicalize_voice_name(item) for item in voices]
@@ -75,8 +89,10 @@ class MLXExternalBackend:
         on_progress: ProgressCallback | None = None,
     ) -> SynthesisResult:
         start = time.perf_counter()
+        chunk_start = time.perf_counter()
         chunk_chars = request.chunk_chars or default_chunk_chars(request.profile, self._device)
         chunks = chunk_text(request.text, chunk_chars)
+        chunk_elapsed = time.perf_counter() - chunk_start
         if not chunks:
             raise ValueError("Input text is empty.")
 
@@ -84,26 +100,35 @@ class MLXExternalBackend:
             if on_progress is not None:
                 on_progress(index, len(chunks), chunk)
 
+        rpc_start = time.perf_counter()
         payload = self._rpc(
             "synthesize",
-            model_id=mlx_model_id(request.profile),
+            model_id=self.model_id_for_profile(request.profile),
             model_type=request.profile.model_type,
             chunks=chunks,
             voice=request.voice or request.profile.default_voice,
             instruct=request.instruct,
             language=normalize_language(request.language),
         )
+        rpc_elapsed = time.perf_counter() - rpc_start
 
         audio = self._load_temp_array(payload["audio_path"])
+        total_elapsed = time.perf_counter() - start
         return SynthesisResult(
             audio=audio,
             sample_rate=int(payload["sample_rate"]),
             chunks=chunks,
-            elapsed_sec=time.perf_counter() - start,
+            elapsed_sec=total_elapsed,
             profile=request.profile.name,
-            model_id=mlx_model_id(request.profile),
+            model_id=self.model_id_for_profile(request.profile),
             device=self.device,
             dtype=str(payload.get("dtype") or self.dtype_name),
+            trace={
+                "chunk_text_sec": chunk_elapsed,
+                "rpc_sec": rpc_elapsed,
+                "worker_process": dict(self._last_process_trace),
+                "worker": payload.get("trace") or {},
+            },
         )
 
     def clone(
@@ -112,8 +137,10 @@ class MLXExternalBackend:
         on_progress: ProgressCallback | None = None,
     ) -> SynthesisResult:
         start = time.perf_counter()
+        chunk_start = time.perf_counter()
         chunk_chars = request.chunk_chars or default_chunk_chars(request.profile, self._device)
         chunks = chunk_text(request.text, chunk_chars)
+        chunk_elapsed = time.perf_counter() - chunk_start
         if not chunks:
             raise ValueError("Input text is empty.")
 
@@ -121,25 +148,34 @@ class MLXExternalBackend:
             if on_progress is not None:
                 on_progress(index, len(chunks), chunk)
 
+        rpc_start = time.perf_counter()
         payload = self._rpc(
             "clone",
-            model_id=mlx_model_id(request.profile),
+            model_id=self.model_id_for_profile(request.profile),
             chunks=chunks,
             reference_audio=str(request.reference_audio),
             reference_text=request.reference_text,
             language=normalize_language(request.language),
         )
+        rpc_elapsed = time.perf_counter() - rpc_start
 
         audio = self._load_temp_array(payload["audio_path"])
+        total_elapsed = time.perf_counter() - start
         return SynthesisResult(
             audio=audio,
             sample_rate=int(payload["sample_rate"]),
             chunks=chunks,
-            elapsed_sec=time.perf_counter() - start,
+            elapsed_sec=total_elapsed,
             profile=request.profile.name,
-            model_id=mlx_model_id(request.profile),
+            model_id=self.model_id_for_profile(request.profile),
             device=self.device,
             dtype=str(payload.get("dtype") or self.dtype_name),
+            trace={
+                "chunk_text_sec": chunk_elapsed,
+                "rpc_sec": rpc_elapsed,
+                "worker_process": dict(self._last_process_trace),
+                "worker": payload.get("trace") or {},
+            },
         )
 
     def close(self) -> None:
@@ -159,14 +195,29 @@ class MLXExternalBackend:
                 process.kill()
                 process.wait(timeout=3)
 
+    def model_id_for_profile(self, profile: ProfileSpec) -> str:
+        return backend_model_id(
+            profile,
+            self.name,
+            mlx_variant=self._mlx_variant,
+            mlx_model=self._mlx_model,
+        )
+
     def _ensure_process(self) -> subprocess.Popen[str]:
         if self._process is not None and self._process.poll() is None:
+            self._last_process_trace = {
+                "worker_process_reused": True,
+                "worker_process_start_sec": 0.0,
+            }
             return self._process
 
+        process_start = time.perf_counter()
         env = os.environ.copy()
         env.setdefault("PYTHONUNBUFFERED", "1")
         env.setdefault("HF_HUB_DISABLE_XET", "1")
         env.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
+        env.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "120")
+        env.setdefault("HF_HUB_ETAG_TIMEOUT", "120")
         env["PYTHONPATH"] = os.pathsep.join(
             [
                 str(Path(__file__).resolve().parents[2]),
@@ -182,11 +233,16 @@ class MLXExternalBackend:
             ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
             encoding="utf-8",
+            bufsize=1,
             env=env,
         )
+        self._last_process_trace = {
+            "worker_process_reused": False,
+            "worker_process_start_sec": time.perf_counter() - process_start,
+        }
         return self._process
 
     def _rpc(self, method: str, **params: Any) -> dict[str, Any]:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -40,3 +41,4 @@ class SynthesisResult:
     model_id: str
     device: str
     dtype: str
+    trace: dict[str, Any] | None = None

@@ -17,6 +17,7 @@ DEFAULT_LANGUAGE = "auto"
 
 SUPPORTED_AUDIO_FORMATS = ("wav", "mp3", "m4a", "aac", "flac", "opus")
 SUPPORTED_BACKENDS = ("auto", "pytorch", "mlx")
+SUPPORTED_MLX_VARIANTS = ("default", "4bit", "5bit", "6bit", "8bit", "bf16")
 SUPPORTED_DEVICES = ("auto", "mps", "cuda", "cpu")
 SUPPORTED_DTYPES = ("auto", "bfloat16", "float32", "float16")
 
@@ -128,12 +129,38 @@ PROFILE_MAP: dict[str, ProfileSpec] = {
     ),
 }
 
-MLX_MODEL_MAP = {
-    "fast": "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-6bit",
-    "quality": "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-6bit",
-    "design": "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-6bit",
-    "clone-fast": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16",
-    "clone-quality": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-6bit",
+MLX_VARIANT_MODEL_MAP: dict[str, dict[str, str]] = {
+    "fast": {
+        "default": "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-6bit",
+        "4bit": "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit",
+        "5bit": "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-5bit",
+        "6bit": "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-6bit",
+        "8bit": "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit",
+        "bf16": "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16",
+    },
+    "quality": {
+        "default": "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-6bit",
+        "6bit": "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-6bit",
+        "8bit": "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit",
+        "bf16": "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16",
+    },
+    "design": {
+        "default": "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-6bit",
+        "6bit": "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-6bit",
+        "bf16": "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16",
+    },
+    "clone-fast": {
+        "default": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-6bit",
+        "6bit": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-6bit",
+        "8bit": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
+        "bf16": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16",
+    },
+    "clone-quality": {
+        "default": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-6bit",
+        "6bit": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-6bit",
+        "8bit": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit",
+        "bf16": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16",
+    },
 }
 
 
@@ -152,17 +179,44 @@ def default_backend_name() -> str:
     return value
 
 
-def mlx_model_id(profile: ProfileSpec) -> str:
+def mlx_model_id(
+    profile: ProfileSpec,
+    *,
+    variant: str | None = None,
+    model_override: str | None = None,
+) -> str:
+    if model_override:
+        return model_override
+
     env_name = f"TTS_QWEN_LOCAL_MLX_{profile.name.upper().replace('-', '_')}_MODEL"
     override = os.environ.get(env_name)
     if override:
         return override
-    return MLX_MODEL_MAP[profile.name]
+
+    selected_variant = (variant or "default").strip().lower()
+    profile_variants = MLX_VARIANT_MODEL_MAP[profile.name]
+    if selected_variant not in profile_variants:
+        supported = ", ".join(profile_variants)
+        raise ValueError(
+            f"Unsupported MLX variant '{selected_variant}' for profile '{profile.name}'. "
+            f"Supported values: {supported}"
+        )
+    return profile_variants[selected_variant]
 
 
-def backend_model_id(profile: ProfileSpec, backend_name: str) -> str:
+def supported_mlx_variants(profile: ProfileSpec) -> tuple[str, ...]:
+    return tuple(MLX_VARIANT_MODEL_MAP[profile.name].keys())
+
+
+def backend_model_id(
+    profile: ProfileSpec,
+    backend_name: str,
+    *,
+    mlx_variant: str | None = None,
+    mlx_model: str | None = None,
+) -> str:
     if backend_name == "mlx":
-        return mlx_model_id(profile)
+        return mlx_model_id(profile, variant=mlx_variant, model_override=mlx_model)
     return profile.model_id
 
 

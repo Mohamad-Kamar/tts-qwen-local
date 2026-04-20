@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import sys
 import tempfile
 import time
@@ -11,6 +12,7 @@ from typing import Any
 
 import numpy as np
 from mlx_audio.tts.utils import get_model_path, load
+from mlx_audio.utils import load_audio
 
 
 class WorkerState:
@@ -18,13 +20,20 @@ class WorkerState:
         self.model_id: str | None = None
         self.model: Any | None = None
 
-    def ensure_loaded(self, model_id: str) -> Any:
+    def ensure_loaded(self, model_id: str) -> tuple[Any, dict[str, Any]]:
+        start = time.perf_counter()
         if self.model_id == model_id and self.model is not None:
-            return self.model
+            return self.model, {
+                "model_reused": True,
+                "model_load_sec": 0.0,
+            }
         with contextlib.redirect_stdout(sys.stderr):
             self.model = load(model_id, lazy=False)
         self.model_id = model_id
-        return self.model
+        return self.model, {
+            "model_reused": False,
+            "model_load_sec": time.perf_counter() - start,
+        }
 
     def preload(self, model_id: str, include_tokenizer: bool = True) -> list[str]:
         del include_tokenizer
@@ -56,16 +65,17 @@ def main() -> int:
 
 def dispatch(state: WorkerState, method: str, params: dict[str, Any]) -> dict[str, Any]:
     if method == "ensure_loaded":
-        model = state.ensure_loaded(params["model_id"])
+        model, trace = state.ensure_loaded(params["model_id"])
         return {
             "model_id": params["model_id"],
             "sample_rate": int(model.sample_rate),
             "dtype": _dtype_name(model),
+            "trace": trace,
         }
     if method == "preload":
         return {"paths": state.preload(params["model_id"], params.get("include_tokenizer", True))}
     if method == "list_voices":
-        model = state.ensure_loaded(params["model_id"])
+        model, _trace = state.ensure_loaded(params["model_id"])
         voices = []
         if callable(getattr(model, "get_supported_speakers", None)):
             voices = list(model.get_supported_speakers() or [])
@@ -78,9 +88,10 @@ def dispatch(state: WorkerState, method: str, params: dict[str, Any]) -> dict[st
 
 
 def _synthesize(state: WorkerState, params: dict[str, Any]) -> dict[str, Any]:
-    model = state.ensure_loaded(params["model_id"])
+    model, load_trace = state.ensure_loaded(params["model_id"])
     chunks = list(params["chunks"])
     start = time.perf_counter()
+    generation_start = time.perf_counter()
 
     if params["model_type"] == "CustomVoice":
         with contextlib.redirect_stdout(sys.stderr):
@@ -107,20 +118,43 @@ def _synthesize(state: WorkerState, params: dict[str, Any]) -> dict[str, Any]:
     else:
         raise ValueError("Clone profiles are not supported by synthesize().")
 
+    model_generate_elapsed = time.perf_counter() - generation_start
+    concat_start = time.perf_counter()
     audio = _concat_results(results)
+    concat_elapsed = time.perf_counter() - concat_start
+    write_start = time.perf_counter()
     audio_path = _write_temp_array(audio)
+    write_elapsed = time.perf_counter() - write_start
+    total_elapsed = time.perf_counter() - start
     return {
         "audio_path": str(audio_path),
         "sample_rate": int(model.sample_rate),
-        "elapsed_sec": time.perf_counter() - start,
+        "elapsed_sec": total_elapsed,
         "dtype": _dtype_name(model),
+        "trace": {
+            **load_trace,
+            "model_generate_sec": model_generate_elapsed,
+            "concat_sec": concat_elapsed,
+            "temp_write_sec": write_elapsed,
+            "worker_total_sec": total_elapsed,
+            "chunk_count": len(chunks),
+            "worker_pid": os.getpid(),
+        },
     }
 
 
 def _clone(state: WorkerState, params: dict[str, Any]) -> dict[str, Any]:
-    model = state.ensure_loaded(params["model_id"])
+    model, load_trace = state.ensure_loaded(params["model_id"])
     chunks = list(params["chunks"])
     start = time.perf_counter()
+    ref_load_start = time.perf_counter()
+    with contextlib.redirect_stdout(sys.stderr):
+        reference_audio = load_audio(
+            params["reference_audio"],
+            sample_rate=model.sample_rate,
+        )
+    ref_load_elapsed = time.perf_counter() - ref_load_start
+    generation_start = time.perf_counter()
     audio_parts: list[np.ndarray] = []
 
     for chunk in chunks:
@@ -131,7 +165,7 @@ def _clone(state: WorkerState, params: dict[str, Any]) -> dict[str, Any]:
                     voice=None,
                     instruct=None,
                     lang_code=params["language"],
-                    ref_audio=params["reference_audio"],
+                    ref_audio=reference_audio,
                     ref_text=params.get("reference_text"),
                     verbose=False,
                 )
@@ -140,13 +174,29 @@ def _clone(state: WorkerState, params: dict[str, Any]) -> dict[str, Any]:
         if chunk_audio.size:
             audio_parts.append(chunk_audio)
 
+    model_generate_elapsed = time.perf_counter() - generation_start
+    concat_start = time.perf_counter()
     audio = np.concatenate(audio_parts) if audio_parts else np.array([], dtype=np.float32)
+    concat_elapsed = time.perf_counter() - concat_start
+    write_start = time.perf_counter()
     audio_path = _write_temp_array(audio)
+    write_elapsed = time.perf_counter() - write_start
+    total_elapsed = time.perf_counter() - start
     return {
         "audio_path": str(audio_path),
         "sample_rate": int(model.sample_rate),
-        "elapsed_sec": time.perf_counter() - start,
+        "elapsed_sec": total_elapsed,
         "dtype": _dtype_name(model),
+        "trace": {
+            **load_trace,
+            "reference_load_sec": ref_load_elapsed,
+            "model_generate_sec": model_generate_elapsed,
+            "concat_sec": concat_elapsed,
+            "temp_write_sec": write_elapsed,
+            "worker_total_sec": total_elapsed,
+            "chunk_count": len(chunks),
+            "worker_pid": os.getpid(),
+        },
     }
 
 

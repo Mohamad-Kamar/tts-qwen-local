@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .audio import infer_audio_format, resolve_output_path, write_audio_file
 from .backend import CloneRequest, SynthesisRequest, create_backend
-from .bench import run_benchmark, write_benchmark_json
+from .bench import run_benchmark, run_clone_benchmark, write_benchmark_json
 from .config import (
     CUSTOMVOICE_SPEAKERS,
     DEFAULT_INPUT_PATH,
@@ -18,11 +18,13 @@ from .config import (
     SUPPORTED_BACKENDS,
     SUPPORTED_DEVICES,
     SUPPORTED_DTYPES,
+    SUPPORTED_MLX_VARIANTS,
     backend_model_id,
     default_chunk_chars,
     get_profile,
     load_presets,
     mlx_model_id,
+    supported_mlx_variants,
     resolve_preset_path,
     validate_clone_options,
     validate_synth_options,
@@ -39,6 +41,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     models = subparsers.add_parser("models", help="List available profiles and model ids.")
     models.add_argument("--verbose", action="store_true", help="Show extra profile details.")
+
+    variants = subparsers.add_parser("variants", help="List supported MLX variants per profile.")
+    variants.add_argument(
+        "--profile",
+        choices=PROFILE_MAP.keys(),
+        help="Optional single profile to inspect.",
+    )
 
     voices = subparsers.add_parser("voices", help="List voices for a CustomVoice profile.")
     _add_shared_generation_args(voices)
@@ -70,6 +79,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Backend runtime to use.",
     )
     preload.add_argument("--mlx-python", type=Path, help="Python executable for the MLX worker.")
+    preload.add_argument(
+        "--mlx-variant",
+        default=None,
+        choices=SUPPORTED_MLX_VARIANTS,
+        help="Named MLX variant to use when the MLX backend is active.",
+    )
+    preload.add_argument("--mlx-model", help="Direct MLX model repo id override.")
 
     synth = subparsers.add_parser("synth", help="Generate speech from text.")
     _add_shared_generation_args(synth)
@@ -84,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
     synth.add_argument("--show-settings", action="store_true", help="Print resolved settings.")
 
     clone = subparsers.add_parser("clone", help="Clone a voice from reference audio.")
-    _add_shared_generation_args(clone)
+    _add_clone_generation_args(clone)
     _add_input_args(clone)
     clone.add_argument("--reference", type=Path, required=True, help="Reference audio file.")
     clone.add_argument("--ref-text", help="Transcript of the reference audio.")
@@ -109,6 +125,19 @@ def build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--seed", type=int, help="Optional torch seed for reproducible benchmark runs.")
     bench.add_argument("--output-json", type=Path, help="Optional JSON output path.")
 
+    bench_clone = subparsers.add_parser("bench-clone", help="Benchmark cold and warm voice-clone times.")
+    _add_clone_generation_args(bench_clone)
+    _add_input_args(bench_clone)
+    bench_clone.add_argument("--reference", type=Path, required=True, help="Reference audio file.")
+    bench_clone.add_argument("--ref-text", help="Transcript of the reference audio.")
+    bench_clone.add_argument(
+        "--x-vector-only-mode",
+        action="store_true",
+        help="Use speaker embedding only when no transcript is available.",
+    )
+    bench_clone.add_argument("--runs", type=int, default=2, help="Warm benchmark runs.")
+    bench_clone.add_argument("--output-json", type=Path, help="Optional JSON output path.")
+
     return parser
 
 
@@ -124,6 +153,8 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "models":
             return _cmd_models(args)
+        if args.command == "variants":
+            return _cmd_variants(args)
         if args.command == "voices":
             return _cmd_voices(args)
         if args.command == "preload":
@@ -134,6 +165,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_clone(args)
         if args.command == "bench":
             return _cmd_bench(args)
+        if args.command == "bench-clone":
+            return _cmd_bench_clone(args)
         parser.error(f"Unknown command: {args.command}")
         return 2
     except KeyboardInterrupt:
@@ -156,6 +189,19 @@ def _cmd_models(args: argparse.Namespace) -> int:
             print(f"  chunk chars (other): {profile.chunk_chars_other}")
             print(f"  pytorch model: {profile.model_id}")
             print(f"  mlx model: {mlx_model_id(profile)}")
+            print("  mlx variants: " + ", ".join(supported_mlx_variants(profile)))
+    return 0
+
+
+def _cmd_variants(args: argparse.Namespace) -> int:
+    profiles = [get_profile(args.profile)] if args.profile else list(PROFILE_MAP.values())
+    for profile in profiles:
+        print(f"{profile.name}:")
+        print(f"  default: {mlx_model_id(profile)}")
+        for variant in supported_mlx_variants(profile):
+            if variant == "default":
+                continue
+            print(f"  {variant}: {mlx_model_id(profile, variant=variant)}")
     return 0
 
 
@@ -169,8 +215,11 @@ def _cmd_voices(args: argparse.Namespace) -> int:
         device=args.device,
         dtype=args.dtype,
         mlx_python=str(args.mlx_python) if args.mlx_python else None,
+        mlx_variant=args.mlx_variant,
+        mlx_model=args.mlx_model,
     )
     try:
+        _validate_mlx_selection_args(args, backend.name)
         backend.ensure_loaded(profile)
         voices = backend.list_voices(profile)
         for voice in voices:
@@ -190,12 +239,18 @@ def _cmd_preload(args: argparse.Namespace) -> int:
         device=args.device,
         dtype=args.dtype,
         mlx_python=str(args.mlx_python) if args.mlx_python else None,
+        mlx_variant=args.mlx_variant,
+        mlx_model=args.mlx_model,
     )
     profiles = list(PROFILE_MAP.values()) if args.all else [get_profile(args.profile)]
 
     try:
+        _validate_mlx_selection_args(args, backend.name)
         for profile in profiles:
-            print(f"Preloading {profile.name}: {backend_model_id(profile, backend.name)}")
+            print(
+                f"Preloading {profile.name}: "
+                f"{backend_model_id(profile, backend.name, mlx_variant=args.mlx_variant, mlx_model=args.mlx_model)}"
+            )
             paths = backend.preload(profile)
             for path in paths:
                 print(f"  cached: {path}")
@@ -214,19 +269,29 @@ def _cmd_synth(args: argparse.Namespace) -> int:
         device=args.device,
         dtype=args.dtype,
         mlx_python=str(args.mlx_python) if args.mlx_python else None,
+        mlx_variant=args.mlx_variant,
+        mlx_model=args.mlx_model,
     )
     audio_format = infer_audio_format(args.output, args.format)
     output_path = resolve_output_path(args.output, audio_format)
     chunk_chars = args.chunk_chars or default_chunk_chars(profile, backend.device)
 
     try:
+        _validate_mlx_selection_args(args, backend.name)
         if args.show_settings:
             _print_settings(
                 {
                     "command": "synth",
                     "profile": profile.name,
                     "backend": backend.name,
-                    "model_id": backend_model_id(profile, backend.name),
+                    "model_id": backend_model_id(
+                        profile,
+                        backend.name,
+                        mlx_variant=args.mlx_variant,
+                        mlx_model=args.mlx_model,
+                    ),
+                    "mlx_variant": args.mlx_variant or "default",
+                    "mlx_model": args.mlx_model or "n/a",
                     "device": backend.device,
                     "dtype": backend.dtype_name,
                     "voice": args.voice or profile.default_voice or "n/a",
@@ -274,6 +339,7 @@ def _cmd_synth(args: argparse.Namespace) -> int:
                         "audio_write_sec": write_elapsed,
                         "total_cli_sec": time.perf_counter() - total_start,
                     },
+                    "backend_trace": result.trace or {},
                     "output": str(output_path),
                     "format": audio_format,
                 },
@@ -292,28 +358,39 @@ def _cmd_clone(args: argparse.Namespace) -> int:
     profile = get_profile(args.profile)
     validate_clone_options(profile, args.reference, args.ref_text, args.x_vector_only_mode)
     text = _load_input_text(args)
+    reference_text = None if args.x_vector_only_mode else args.ref_text
     backend = create_backend(
         args.backend,
         device=args.device,
         dtype=args.dtype,
         mlx_python=str(args.mlx_python) if args.mlx_python else None,
+        mlx_variant=args.mlx_variant,
+        mlx_model=args.mlx_model,
     )
     audio_format = infer_audio_format(args.output, args.format)
     output_path = resolve_output_path(args.output, audio_format)
     chunk_chars = args.chunk_chars or default_chunk_chars(profile, backend.device)
 
     try:
+        _validate_mlx_selection_args(args, backend.name)
         if args.show_settings:
             _print_settings(
                 {
                     "command": "clone",
                     "profile": profile.name,
                     "backend": backend.name,
-                    "model_id": backend_model_id(profile, backend.name),
+                    "model_id": backend_model_id(
+                        profile,
+                        backend.name,
+                        mlx_variant=args.mlx_variant,
+                        mlx_model=args.mlx_model,
+                    ),
+                    "mlx_variant": args.mlx_variant or "default",
+                    "mlx_model": args.mlx_model or "n/a",
                     "device": backend.device,
                     "dtype": backend.dtype_name,
                     "reference": str(args.reference),
-                    "ref_text": (args.ref_text or "").strip() or "n/a",
+                    "ref_text": (reference_text or "").strip() or "n/a",
                     "x_vector_only_mode": args.x_vector_only_mode,
                     "language": args.language or DEFAULT_LANGUAGE,
                     "chunk_chars": chunk_chars,
@@ -327,7 +404,7 @@ def _cmd_clone(args: argparse.Namespace) -> int:
                 text=text,
                 profile=profile,
                 reference_audio=args.reference,
-                reference_text=args.ref_text,
+                reference_text=reference_text,
                 x_vector_only_mode=args.x_vector_only_mode,
                 language=args.language or DEFAULT_LANGUAGE,
                 chunk_chars=chunk_chars,
@@ -360,6 +437,7 @@ def _cmd_clone(args: argparse.Namespace) -> int:
                         "audio_write_sec": write_elapsed,
                         "total_cli_sec": time.perf_counter() - total_start,
                     },
+                    "backend_trace": result.trace or {},
                     "reference": str(args.reference),
                     "output": str(output_path),
                     "format": audio_format,
@@ -388,10 +466,43 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         device=args.device,
         dtype=args.dtype,
         mlx_python=str(args.mlx_python) if args.mlx_python else None,
+        mlx_variant=args.mlx_variant,
+        mlx_model=args.mlx_model,
         chunk_chars=args.chunk_chars,
         warm_runs=args.runs,
         seed=args.seed,
     )
+
+    return _print_benchmark_result(args, result)
+
+
+def _cmd_bench_clone(args: argparse.Namespace) -> int:
+    profile = get_profile(args.profile)
+    validate_clone_options(profile, args.reference, args.ref_text, args.x_vector_only_mode)
+    text = _load_input_text(args)
+    reference_text = None if args.x_vector_only_mode else args.ref_text
+    result = run_clone_benchmark(
+        profile=profile,
+        text=text,
+        reference_audio=args.reference,
+        reference_text=reference_text,
+        x_vector_only_mode=args.x_vector_only_mode,
+        language=args.language or DEFAULT_LANGUAGE,
+        backend=args.backend,
+        device=args.device,
+        dtype=args.dtype,
+        mlx_python=str(args.mlx_python) if args.mlx_python else None,
+        mlx_variant=args.mlx_variant,
+        mlx_model=args.mlx_model,
+        chunk_chars=args.chunk_chars,
+        warm_runs=args.runs,
+    )
+
+    return _print_benchmark_result(args, result)
+
+
+def _print_benchmark_result(args: argparse.Namespace, result) -> int:
+    print(f"mode={result.mode}")
 
     print(f"profile={result.profile}")
     print(f"model_id={result.model_id}")
@@ -413,6 +524,17 @@ def _cmd_bench(args: argparse.Namespace) -> int:
     print(f"warm_elapsed_sec_avg={result.warm_elapsed_sec_avg:.2f}")
     print(f"warm_rtf_avg={result.warm_rtf_avg:.2f}")
     print("warm_elapsed_sec_runs=" + ", ".join(f"{item:.2f}" for item in result.warm_elapsed_sec_runs))
+    for key in (
+        "language",
+        "voice",
+        "instruct",
+        "reference_audio",
+        "has_reference_text",
+        "x_vector_only_mode",
+    ):
+        value = result.inputs.get(key)
+        if value not in (None, "", False):
+            print(f"{key}={value}")
 
     if args.output_json:
         write_benchmark_json(args.output_json, result)
@@ -441,6 +563,13 @@ def _add_shared_generation_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--mlx-python", type=Path, help="Python executable for the MLX worker.")
     parser.add_argument(
+        "--mlx-variant",
+        default=None,
+        choices=SUPPORTED_MLX_VARIANTS,
+        help="Named MLX variant to use when the MLX backend is active.",
+    )
+    parser.add_argument("--mlx-model", help="Direct MLX model repo id override.")
+    parser.add_argument(
         "--device",
         default=None,
         choices=SUPPORTED_DEVICES,
@@ -451,6 +580,46 @@ def _add_shared_generation_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         choices=SUPPORTED_DTYPES,
         help="Computation dtype. Defaults to auto.",
+    )
+    parser.add_argument("--chunk-chars", type=int, help="Chunk size for long text.")
+
+
+def _add_clone_generation_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--profile",
+        default=None,
+        choices=PROFILE_MAP.keys(),
+        help="Model profile to use.",
+    )
+    parser.add_argument(
+        "--language",
+        help="Language code or name. Defaults to auto.",
+    )
+    parser.add_argument(
+        "--backend",
+        default=None,
+        choices=SUPPORTED_BACKENDS,
+        help="Backend runtime to use.",
+    )
+    parser.add_argument("--mlx-python", type=Path, help="Python executable for the MLX worker.")
+    parser.add_argument(
+        "--mlx-variant",
+        default=None,
+        choices=SUPPORTED_MLX_VARIANTS,
+        help="Named MLX variant to use when the MLX backend is active.",
+    )
+    parser.add_argument("--mlx-model", help="Direct MLX model repo id override.")
+    parser.add_argument(
+        "--device",
+        default=None,
+        choices=SUPPORTED_DEVICES,
+        help="Execution device.",
+    )
+    parser.add_argument(
+        "--dtype",
+        default=None,
+        choices=SUPPORTED_DTYPES,
+        help="Computation dtype. Primarily applies to the PyTorch backend.",
     )
     parser.add_argument("--chunk-chars", type=int, help="Chunk size for long text.")
 
@@ -495,6 +664,8 @@ def _apply_preset_defaults(args: argparse.Namespace, preset: dict[str, object]) 
         "chunk_chars",
         "backend",
         "mlx_python",
+        "mlx_variant",
+        "mlx_model",
         "format",
         "output",
     )
@@ -503,7 +674,11 @@ def _apply_preset_defaults(args: argparse.Namespace, preset: dict[str, object]) 
         if current in (None,):
             value = preset.get(field)
             if value is not None:
-                setattr(args, field, Path(value) if field in {"output", "mlx_python"} else value)
+                setattr(
+                    args,
+                    field,
+                    Path(value) if field in {"output", "mlx_python"} else value,
+                )
 
 
 def _finalize_common_defaults(args: argparse.Namespace) -> None:
@@ -515,6 +690,8 @@ def _finalize_common_defaults(args: argparse.Namespace) -> None:
         args.dtype = "auto"
     if hasattr(args, "backend") and args.backend is None:
         args.backend = "auto"
+    if hasattr(args, "mlx_variant") and args.mlx_variant is None:
+        args.mlx_variant = "default"
 
 
 def _progress_printer(index: int, total: int, _chunk: str) -> None:
@@ -537,6 +714,16 @@ def _safe_rtf(elapsed_sec: float, duration_sec: float) -> float | None:
     if duration_sec <= 0:
         return None
     return elapsed_sec / duration_sec
+
+
+def _validate_mlx_selection_args(args: argparse.Namespace, resolved_backend: str) -> None:
+    if resolved_backend == "mlx":
+        return
+    if getattr(args, "mlx_variant", "default") != "default" or getattr(args, "mlx_model", None):
+        raise ValueError(
+            "--mlx-variant and --mlx-model require the MLX backend. "
+            "Use --backend mlx or let --backend auto resolve to mlx."
+        )
 
 
 if __name__ == "__main__":

@@ -7,12 +7,14 @@ from pathlib import Path
 from tts_qwen_local.config import (
     DEFAULT_PROFILE_NAME,
     PROFILE_MAP,
+    SUPPORTED_MLX_VARIANTS,
     backend_model_id,
     default_chunk_chars,
     get_profile,
     load_presets,
     mlx_model_id,
     normalize_language,
+    supported_mlx_variants,
     validate_clone_options,
     validate_synth_options,
 )
@@ -43,6 +45,19 @@ class ConfigTests(unittest.TestCase):
         profile = get_profile("fast")
         self.assertEqual(backend_model_id(profile, "pytorch"), profile.model_id)
         self.assertEqual(backend_model_id(profile, "mlx"), mlx_model_id(profile))
+        self.assertEqual(
+            backend_model_id(profile, "mlx", mlx_variant="8bit"),
+            mlx_model_id(profile, variant="8bit"),
+        )
+
+    def test_supported_mlx_variants_include_default(self):
+        variants = supported_mlx_variants(get_profile("fast"))
+        self.assertIn("default", variants)
+        self.assertTrue(set(variants).issubset(set(SUPPORTED_MLX_VARIANTS)))
+
+    def test_unknown_variant_raises(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported MLX variant"):
+            mlx_model_id(get_profile("design"), variant="8bit")
 
     def test_validate_synth_rejects_voice_design_without_instruct(self):
         with self.assertRaisesRegex(ValueError, "requires --instruct"):

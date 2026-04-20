@@ -3,7 +3,6 @@ from __future__ import annotations
 import gc
 import os
 import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +30,7 @@ class QwenBackend:
         self._dtype = self.resolve_dtype(self._device, dtype)
         self._models: dict[str, Any] = {}
         self._clone_prompt_cache: dict[tuple[str, str, str, bool], Any] = {}
+        self._last_model_trace: dict[str, Any] = {"model_reused": True, "model_load_sec": 0.0}
 
     @property
     def device(self) -> str:
@@ -110,8 +110,10 @@ class QwenBackend:
         start = time.perf_counter()
         voice = request.voice or request.profile.default_voice
         language_name = normalize_language(request.language)
+        chunk_start = time.perf_counter()
         chunk_chars = request.chunk_chars or default_chunk_chars(request.profile, self._device)
         chunks = chunk_text(request.text, chunk_chars)
+        chunk_elapsed = time.perf_counter() - chunk_start
         if not chunks:
             raise ValueError("Input text is empty.")
 
@@ -119,6 +121,7 @@ class QwenBackend:
             if on_progress is not None:
                 on_progress(index, len(chunks), chunk)
 
+        generate_start = time.perf_counter()
         wavs, sample_rate = self._run_with_model_retry(
             profile=request.profile,
             operation=lambda model: self._generate_synthesis_batch(
@@ -130,8 +133,11 @@ class QwenBackend:
                 language_name=language_name,
             ),
         )
+        generate_elapsed = time.perf_counter() - generate_start
 
+        concat_start = time.perf_counter()
         final_audio = _concat_audio(_extract_audio_segments(wavs))
+        concat_elapsed = time.perf_counter() - concat_start
         return SynthesisResult(
             audio=final_audio,
             sample_rate=sample_rate,
@@ -141,6 +147,13 @@ class QwenBackend:
             model_id=request.profile.model_id,
             device=self._device,
             dtype=self.dtype_name,
+            trace={
+                "chunk_text_sec": chunk_elapsed,
+                "generate_sec": generate_elapsed,
+                "concat_sec": concat_elapsed,
+                "retry_to_float32": self._last_model_trace.get("retry_to_float32", False),
+                "model": dict(self._last_model_trace),
+            },
         )
 
     def clone(
@@ -150,8 +163,10 @@ class QwenBackend:
     ) -> SynthesisResult:
         start = time.perf_counter()
         language_name = normalize_language(request.language)
+        chunk_start = time.perf_counter()
         chunk_chars = request.chunk_chars or default_chunk_chars(request.profile, self._device)
         chunks = chunk_text(request.text, chunk_chars)
+        chunk_elapsed = time.perf_counter() - chunk_start
         if not chunks:
             raise ValueError("Input text is empty.")
 
@@ -159,6 +174,8 @@ class QwenBackend:
             if on_progress is not None:
                 on_progress(index, len(chunks), chunk)
 
+        clone_prompt_trace: dict[str, Any] = {}
+        generate_start = time.perf_counter()
         wavs, sample_rate = self._run_with_model_retry(
             profile=request.profile,
             operation=lambda active_model: self._generate_clone_batch(
@@ -166,10 +183,14 @@ class QwenBackend:
                 request=request,
                 chunks=chunks,
                 language_name=language_name,
+                trace=clone_prompt_trace,
             ),
         )
+        generate_elapsed = time.perf_counter() - generate_start
 
+        concat_start = time.perf_counter()
         final_audio = _concat_audio(_extract_audio_segments(wavs))
+        concat_elapsed = time.perf_counter() - concat_start
         return SynthesisResult(
             audio=final_audio,
             sample_rate=sample_rate,
@@ -179,6 +200,14 @@ class QwenBackend:
             model_id=request.profile.model_id,
             device=self._device,
             dtype=self.dtype_name,
+            trace={
+                "chunk_text_sec": chunk_elapsed,
+                "generate_sec": generate_elapsed,
+                "concat_sec": concat_elapsed,
+                "retry_to_float32": self._last_model_trace.get("retry_to_float32", False),
+                "model": dict(self._last_model_trace),
+                "clone_prompt": clone_prompt_trace,
+            },
         )
 
     def _generate_synthesis_batch(
@@ -213,6 +242,7 @@ class QwenBackend:
         request: CloneRequest,
         chunks: list[str],
         language_name: str,
+        trace: dict[str, Any] | None = None,
     ) -> tuple[Any, int]:
         prompt = self._get_or_create_clone_prompt(
             profile=request.profile,
@@ -220,6 +250,7 @@ class QwenBackend:
             reference_audio=request.reference_audio,
             reference_text=request.reference_text,
             x_vector_only_mode=request.x_vector_only_mode,
+            trace=trace,
         )
         return model.generate_voice_clone(
             text=chunks,
@@ -231,14 +262,16 @@ class QwenBackend:
     def _run_with_model_retry(
         self,
         profile: ProfileSpec,
-        operation: Callable[[Any], Any],
+        operation,
     ) -> Any:
+        self._last_model_trace = {"model_reused": True, "model_load_sec": 0.0, "retry_to_float32": False}
         try:
             model = self._get_model(profile)
             return operation(model)
         except Exception as error:
             if not self._should_retry_with_float32(error):
                 raise
+            self._last_model_trace["retry_to_float32"] = True
             self._switch_dtype("float32")
             model = self._get_model(profile)
             return operation(model)
@@ -275,6 +308,7 @@ class QwenBackend:
         reference_audio: Path,
         reference_text: str | None,
         x_vector_only_mode: bool,
+        trace: dict[str, Any] | None = None,
     ) -> Any:
         audio_stat = reference_audio.stat()
         cache_key = (
@@ -287,19 +321,33 @@ class QwenBackend:
             self.dtype_name,
         )
         if cache_key in self._clone_prompt_cache:
+            if trace is not None:
+                trace.update({"cache_hit": True, "build_sec": 0.0})
             return self._clone_prompt_cache[cache_key]
 
+        prompt_start = time.perf_counter()
         prompt = model.create_voice_clone_prompt(
             ref_audio=str(reference_audio),
             ref_text=reference_text,
             x_vector_only_mode=x_vector_only_mode,
         )
         self._clone_prompt_cache[cache_key] = prompt
+        if trace is not None:
+            trace.update({"cache_hit": False, "build_sec": time.perf_counter() - prompt_start})
         return prompt
 
     def _get_model(self, profile: ProfileSpec) -> Any:
         if profile.model_id not in self._models:
+            load_start = time.perf_counter()
             self._models[profile.model_id] = self._load_model(profile.model_id)
+            self._last_model_trace.update(
+                {
+                    "model_reused": False,
+                    "model_load_sec": time.perf_counter() - load_start,
+                }
+            )
+        else:
+            self._last_model_trace.update({"model_reused": True, "model_load_sec": 0.0})
         return self._models[profile.model_id]
 
     def _load_model(self, model_id: str) -> Any:

@@ -6,7 +6,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tts_qwen_local.cli import _apply_preset_defaults, _load_input_text, build_parser
+from tts_qwen_local.cli import (
+    _apply_preset_defaults,
+    _load_input_text,
+    _validate_mlx_selection_args,
+    build_parser,
+)
 
 
 class CliHelperTests(unittest.TestCase):
@@ -38,6 +43,7 @@ class CliHelperTests(unittest.TestCase):
                 "profile": "quality",
                 "voice": "Ryan",
                 "backend": "mlx",
+                "mlx_variant": "8bit",
                 "dtype": "bfloat16",
                 "format": "mp3",
             },
@@ -45,5 +51,12 @@ class CliHelperTests(unittest.TestCase):
         self.assertEqual(args.profile, "quality")
         self.assertEqual(args.voice, "Ryan")
         self.assertEqual(args.backend, "mlx")
+        self.assertEqual(args.mlx_variant, "8bit")
         self.assertEqual(args.dtype, "bfloat16")
         self.assertEqual(args.format, "mp3")
+
+    def test_validate_mlx_selection_args_rejects_pytorch_override(self):
+        parser = build_parser()
+        args = parser.parse_args(["synth", "--text", "Hello", "--backend", "pytorch", "--mlx-variant", "8bit"])
+        with self.assertRaisesRegex(ValueError, "require the MLX backend"):
+            _validate_mlx_selection_args(args, "pytorch")
