@@ -37,11 +37,13 @@ class CliHelperTests(unittest.TestCase):
             {
                 "profile": "quality",
                 "voice": "Ryan",
+                "backend": "mlx",
                 "dtype": "bfloat16",
                 "format": "mp3",
             },
         )
         self.assertEqual(args.profile, "quality")
         self.assertEqual(args.voice, "Ryan")
+        self.assertEqual(args.backend, "mlx")
         self.assertEqual(args.dtype, "bfloat16")
         self.assertEqual(args.format, "mp3")

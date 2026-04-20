@@ -4,7 +4,6 @@ import gc
 import os
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -19,44 +18,12 @@ from ..config import (
     normalize_language,
 )
 from ..text import chunk_text
-
-ProgressCallback = Callable[[int, int, str], None]
-
-
-@dataclass(frozen=True, slots=True)
-class SynthesisRequest:
-    text: str
-    profile: ProfileSpec
-    language: str = "auto"
-    voice: str | None = None
-    instruct: str | None = None
-    chunk_chars: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class CloneRequest:
-    text: str
-    profile: ProfileSpec
-    reference_audio: Path
-    reference_text: str | None = None
-    x_vector_only_mode: bool = False
-    language: str = "auto"
-    chunk_chars: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class SynthesisResult:
-    audio: np.ndarray
-    sample_rate: int
-    chunks: list[str]
-    elapsed_sec: float
-    profile: str
-    model_id: str
-    device: str
-    dtype: str
+from .types import CloneRequest, ProgressCallback, SynthesisRequest, SynthesisResult
 
 
 class QwenBackend:
+    name = "pytorch"
+
     def __init__(self, device: str = "auto", dtype: str = "auto"):
         self._configure_device_environment(device)
         self._device = self.detect_device(device)
@@ -357,6 +324,11 @@ class QwenBackend:
             torch.cuda.synchronize()
             torch.cuda.empty_cache()
         gc.collect()
+
+    def close(self) -> None:
+        self._models.clear()
+        self._clone_prompt_cache.clear()
+        self.clear_unused_memory()
 
 
 def _extract_audio_array(wavs: Any) -> np.ndarray:

@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from .audio import infer_audio_format, resolve_output_path, write_audio_file
-from .backend import CloneRequest, QwenBackend, SynthesisRequest
+from .backend import CloneRequest, SynthesisRequest, create_backend
 from .bench import run_benchmark, write_benchmark_json
 from .config import (
     CUSTOMVOICE_SPEAKERS,
@@ -13,11 +13,14 @@ from .config import (
     DEFAULT_LANGUAGE,
     DEFAULT_PROFILE_NAME,
     PROFILE_MAP,
+    SUPPORTED_BACKENDS,
     SUPPORTED_DEVICES,
     SUPPORTED_DTYPES,
+    backend_model_id,
     default_chunk_chars,
     get_profile,
     load_presets,
+    mlx_model_id,
     resolve_preset_path,
     validate_clone_options,
     validate_synth_options,
@@ -52,6 +55,19 @@ def build_parser() -> argparse.ArgumentParser:
         choices=SUPPORTED_DEVICES,
         help="Device to use if the model is loaded later.",
     )
+    preload.add_argument(
+        "--dtype",
+        default=None,
+        choices=SUPPORTED_DTYPES,
+        help="Computation dtype. Defaults to auto.",
+    )
+    preload.add_argument(
+        "--backend",
+        default=None,
+        choices=SUPPORTED_BACKENDS,
+        help="Backend runtime to use.",
+    )
+    preload.add_argument("--mlx-python", type=Path, help="Python executable for the MLX worker.")
 
     synth = subparsers.add_parser("synth", help="Generate speech from text.")
     _add_shared_generation_args(synth)
@@ -134,6 +150,8 @@ def _cmd_models(args: argparse.Namespace) -> int:
             print(f"  description: {profile.description}")
             print(f"  chunk chars (mps): {profile.chunk_chars_mps}")
             print(f"  chunk chars (other): {profile.chunk_chars_other}")
+            print(f"  pytorch model: {profile.model_id}")
+            print(f"  mlx model: {mlx_model_id(profile)}")
     return 0
 
 
@@ -142,123 +160,157 @@ def _cmd_voices(args: argparse.Namespace) -> int:
     if profile.model_type != "CustomVoice":
         raise ValueError(f"Profile '{profile.name}' does not support preset voices.")
 
-    backend = QwenBackend(device=args.device, dtype=args.dtype)
-    backend.ensure_loaded(profile)
-    voices = backend.list_voices(profile)
-    for voice in voices:
-        description = CUSTOMVOICE_SPEAKERS.get(voice, "")
-        if description:
-            print(f"{voice}: {description}")
-        else:
-            print(voice)
-    return 0
+    backend = create_backend(
+        args.backend,
+        device=args.device,
+        dtype=args.dtype,
+        mlx_python=str(args.mlx_python) if args.mlx_python else None,
+    )
+    try:
+        backend.ensure_loaded(profile)
+        voices = backend.list_voices(profile)
+        for voice in voices:
+            description = CUSTOMVOICE_SPEAKERS.get(voice, "")
+            if description:
+                print(f"{voice}: {description}")
+            else:
+                print(voice)
+        return 0
+    finally:
+        backend.close()
 
 
 def _cmd_preload(args: argparse.Namespace) -> int:
-    backend = QwenBackend(device=args.device, dtype=args.dtype)
+    backend = create_backend(
+        args.backend,
+        device=args.device,
+        dtype=args.dtype,
+        mlx_python=str(args.mlx_python) if args.mlx_python else None,
+    )
     profiles = list(PROFILE_MAP.values()) if args.all else [get_profile(args.profile)]
 
-    for profile in profiles:
-        print(f"Preloading {profile.name}: {profile.model_id}")
-        paths = backend.preload(profile)
-        for path in paths:
-            print(f"  cached: {path}")
-    return 0
+    try:
+        for profile in profiles:
+            print(f"Preloading {profile.name}: {backend_model_id(profile, backend.name)}")
+            paths = backend.preload(profile)
+            for path in paths:
+                print(f"  cached: {path}")
+        return 0
+    finally:
+        backend.close()
 
 
 def _cmd_synth(args: argparse.Namespace) -> int:
     profile = get_profile(args.profile)
     validate_synth_options(profile, args.voice, args.instruct)
     text = _load_input_text(args)
-    backend = QwenBackend(device=args.device, dtype=args.dtype)
+    backend = create_backend(
+        args.backend,
+        device=args.device,
+        dtype=args.dtype,
+        mlx_python=str(args.mlx_python) if args.mlx_python else None,
+    )
     audio_format = infer_audio_format(args.output, args.format)
     output_path = resolve_output_path(args.output, audio_format)
     chunk_chars = args.chunk_chars or default_chunk_chars(profile, backend.device)
 
-    if args.show_settings:
-        _print_settings(
-            {
-                "command": "synth",
-                "profile": profile.name,
-                "model_id": profile.model_id,
-                "device": backend.device,
-                "dtype": backend.dtype_name,
-                "voice": args.voice or profile.default_voice or "n/a",
-                "language": args.language or DEFAULT_LANGUAGE,
-                "chunk_chars": chunk_chars,
-                "output": str(output_path),
-                "format": audio_format,
-            }
+    try:
+        if args.show_settings:
+            _print_settings(
+                {
+                    "command": "synth",
+                    "profile": profile.name,
+                    "backend": backend.name,
+                    "model_id": backend_model_id(profile, backend.name),
+                    "device": backend.device,
+                    "dtype": backend.dtype_name,
+                    "voice": args.voice or profile.default_voice or "n/a",
+                    "language": args.language or DEFAULT_LANGUAGE,
+                    "chunk_chars": chunk_chars,
+                    "output": str(output_path),
+                    "format": audio_format,
+                }
+            )
+
+        result = backend.synthesize(
+            SynthesisRequest(
+                text=text,
+                profile=profile,
+                language=args.language or DEFAULT_LANGUAGE,
+                voice=args.voice,
+                instruct=args.instruct,
+                chunk_chars=chunk_chars,
+            ),
+            on_progress=_progress_printer,
         )
+        write_audio_file(output_path, result.audio, result.sample_rate, audio_format)
 
-    result = backend.synthesize(
-        SynthesisRequest(
-            text=text,
-            profile=profile,
-            language=args.language or DEFAULT_LANGUAGE,
-            voice=args.voice,
-            instruct=args.instruct,
-            chunk_chars=chunk_chars,
-        ),
-        on_progress=_progress_printer,
-    )
-    write_audio_file(output_path, result.audio, result.sample_rate, audio_format)
-
-    duration = len(result.audio) / result.sample_rate
-    print(
-        f"Wrote {output_path} in {result.elapsed_sec:.2f}s "
-        f"({duration:.2f}s audio, {len(result.chunks)} chunks, profile={profile.name}, device={backend.device}, dtype={result.dtype})."
-    )
-    return 0
+        duration = len(result.audio) / result.sample_rate
+        print(
+            f"Wrote {output_path} in {result.elapsed_sec:.2f}s "
+            f"({duration:.2f}s audio, {len(result.chunks)} chunks, profile={profile.name}, backend={backend.name}, device={backend.device}, dtype={result.dtype})."
+        )
+        return 0
+    finally:
+        backend.close()
 
 
 def _cmd_clone(args: argparse.Namespace) -> int:
     profile = get_profile(args.profile)
     validate_clone_options(profile, args.reference, args.ref_text, args.x_vector_only_mode)
     text = _load_input_text(args)
-    backend = QwenBackend(device=args.device, dtype=args.dtype)
+    backend = create_backend(
+        args.backend,
+        device=args.device,
+        dtype=args.dtype,
+        mlx_python=str(args.mlx_python) if args.mlx_python else None,
+    )
     audio_format = infer_audio_format(args.output, args.format)
     output_path = resolve_output_path(args.output, audio_format)
     chunk_chars = args.chunk_chars or default_chunk_chars(profile, backend.device)
 
-    if args.show_settings:
-        _print_settings(
-            {
-                "command": "clone",
-                "profile": profile.name,
-                "model_id": profile.model_id,
-                "device": backend.device,
-                "dtype": backend.dtype_name,
-                "reference": str(args.reference),
-                "ref_text": (args.ref_text or "").strip() or "n/a",
-                "x_vector_only_mode": args.x_vector_only_mode,
-                "language": args.language or DEFAULT_LANGUAGE,
-                "chunk_chars": chunk_chars,
-                "output": str(output_path),
-                "format": audio_format,
-            }
+    try:
+        if args.show_settings:
+            _print_settings(
+                {
+                    "command": "clone",
+                    "profile": profile.name,
+                    "backend": backend.name,
+                    "model_id": backend_model_id(profile, backend.name),
+                    "device": backend.device,
+                    "dtype": backend.dtype_name,
+                    "reference": str(args.reference),
+                    "ref_text": (args.ref_text or "").strip() or "n/a",
+                    "x_vector_only_mode": args.x_vector_only_mode,
+                    "language": args.language or DEFAULT_LANGUAGE,
+                    "chunk_chars": chunk_chars,
+                    "output": str(output_path),
+                    "format": audio_format,
+                }
+            )
+
+        result = backend.clone(
+            CloneRequest(
+                text=text,
+                profile=profile,
+                reference_audio=args.reference,
+                reference_text=args.ref_text,
+                x_vector_only_mode=args.x_vector_only_mode,
+                language=args.language or DEFAULT_LANGUAGE,
+                chunk_chars=chunk_chars,
+            ),
+            on_progress=_progress_printer,
         )
+        write_audio_file(output_path, result.audio, result.sample_rate, audio_format)
 
-    result = backend.clone(
-        CloneRequest(
-            text=text,
-            profile=profile,
-            reference_audio=args.reference,
-            reference_text=args.ref_text,
-            x_vector_only_mode=args.x_vector_only_mode,
-            language=args.language or DEFAULT_LANGUAGE,
-            chunk_chars=chunk_chars,
-        ),
-        on_progress=_progress_printer,
-    )
-    write_audio_file(output_path, result.audio, result.sample_rate, audio_format)
-
-    duration = len(result.audio) / result.sample_rate
-    print(
-        f"Wrote {output_path} in {result.elapsed_sec:.2f}s "
-        f"({duration:.2f}s audio, {len(result.chunks)} chunks, profile={profile.name}, device={backend.device}, dtype={result.dtype})."
-    )
-    return 0
+        duration = len(result.audio) / result.sample_rate
+        print(
+            f"Wrote {output_path} in {result.elapsed_sec:.2f}s "
+            f"({duration:.2f}s audio, {len(result.chunks)} chunks, profile={profile.name}, backend={backend.name}, device={backend.device}, dtype={result.dtype})."
+        )
+        return 0
+    finally:
+        backend.close()
 
 
 def _cmd_bench(args: argparse.Namespace) -> int:
@@ -271,8 +323,10 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         voice=args.voice,
         language=args.language or DEFAULT_LANGUAGE,
         instruct=args.instruct,
+        backend=args.backend,
         device=args.device,
         dtype=args.dtype,
+        mlx_python=str(args.mlx_python) if args.mlx_python else None,
         chunk_chars=args.chunk_chars,
         warm_runs=args.runs,
         seed=args.seed,
@@ -280,6 +334,7 @@ def _cmd_bench(args: argparse.Namespace) -> int:
 
     print(f"profile={result.profile}")
     print(f"model_id={result.model_id}")
+    print(f"backend={result.backend}")
     print(f"device={result.device}")
     print(f"dtype={result.dtype}")
     print(f"seed={result.seed if result.seed is not None else 'n/a'}")
@@ -317,6 +372,13 @@ def _add_shared_generation_args(parser: argparse.ArgumentParser) -> None:
         "--language",
         help="Language code or name. Defaults to auto.",
     )
+    parser.add_argument(
+        "--backend",
+        default=None,
+        choices=SUPPORTED_BACKENDS,
+        help="Backend runtime to use.",
+    )
+    parser.add_argument("--mlx-python", type=Path, help="Python executable for the MLX worker.")
     parser.add_argument(
         "--device",
         default=None,
@@ -370,6 +432,8 @@ def _apply_preset_defaults(args: argparse.Namespace, preset: dict[str, object]) 
         "device",
         "dtype",
         "chunk_chars",
+        "backend",
+        "mlx_python",
         "format",
         "output",
     )
@@ -378,7 +442,7 @@ def _apply_preset_defaults(args: argparse.Namespace, preset: dict[str, object]) 
         if current in (None,):
             value = preset.get(field)
             if value is not None:
-                setattr(args, field, Path(value) if field == "output" else value)
+                setattr(args, field, Path(value) if field in {"output", "mlx_python"} else value)
 
 
 def _finalize_common_defaults(args: argparse.Namespace) -> None:
@@ -388,6 +452,8 @@ def _finalize_common_defaults(args: argparse.Namespace) -> None:
         args.device = "auto"
     if hasattr(args, "dtype") and args.dtype is None:
         args.dtype = "auto"
+    if hasattr(args, "backend") and args.backend is None:
+        args.backend = "auto"
 
 
 def _progress_printer(index: int, total: int, _chunk: str) -> None:

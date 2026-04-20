@@ -7,9 +7,11 @@ from pathlib import Path
 from tts_qwen_local.config import (
     DEFAULT_PROFILE_NAME,
     PROFILE_MAP,
+    backend_model_id,
     default_chunk_chars,
     get_profile,
     load_presets,
+    mlx_model_id,
     normalize_language,
     validate_clone_options,
     validate_synth_options,
@@ -35,6 +37,12 @@ class ConfigTests(unittest.TestCase):
         profile = get_profile("fast")
         self.assertEqual(default_chunk_chars(profile, "mps"), profile.chunk_chars_mps)
         self.assertEqual(default_chunk_chars(profile, "cpu"), profile.chunk_chars_other)
+        self.assertEqual(default_chunk_chars(profile, "mlx"), profile.chunk_chars_other)
+
+    def test_backend_model_id_switches_for_mlx(self):
+        profile = get_profile("fast")
+        self.assertEqual(backend_model_id(profile, "pytorch"), profile.model_id)
+        self.assertEqual(backend_model_id(profile, "mlx"), mlx_model_id(profile))
 
     def test_validate_synth_rejects_voice_design_without_instruct(self):
         with self.assertRaisesRegex(ValueError, "requires --instruct"):

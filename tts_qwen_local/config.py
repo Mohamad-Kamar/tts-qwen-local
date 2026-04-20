@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ TOKENIZER_MODEL_ID = "Qwen/Qwen3-TTS-Tokenizer-12Hz"
 DEFAULT_LANGUAGE = "auto"
 
 SUPPORTED_AUDIO_FORMATS = ("wav", "mp3", "m4a", "aac", "flac", "opus")
+SUPPORTED_BACKENDS = ("auto", "pytorch", "mlx")
 SUPPORTED_DEVICES = ("auto", "mps", "cuda", "cpu")
 SUPPORTED_DTYPES = ("auto", "bfloat16", "float32", "float16")
 
@@ -126,12 +128,53 @@ PROFILE_MAP: dict[str, ProfileSpec] = {
     ),
 }
 
+MLX_MODEL_MAP = {
+    "fast": "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-6bit",
+    "quality": "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-6bit",
+    "design": "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-6bit",
+    "clone-fast": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16",
+    "clone-quality": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-6bit",
+}
+
 
 def get_profile(name: str) -> ProfileSpec:
     try:
         return PROFILE_MAP[name]
     except KeyError as exc:
         raise ValueError(f"Unknown profile: {name}") from exc
+
+
+def default_backend_name() -> str:
+    value = os.environ.get("TTS_QWEN_BACKEND", "auto").strip().lower()
+    if value not in SUPPORTED_BACKENDS:
+        supported = ", ".join(SUPPORTED_BACKENDS)
+        raise ValueError(f"Unsupported backend '{value}'. Supported values: {supported}")
+    return value
+
+
+def mlx_model_id(profile: ProfileSpec) -> str:
+    env_name = f"TTS_QWEN_LOCAL_MLX_{profile.name.upper().replace('-', '_')}_MODEL"
+    override = os.environ.get(env_name)
+    if override:
+        return override
+    return MLX_MODEL_MAP[profile.name]
+
+
+def backend_model_id(profile: ProfileSpec, backend_name: str) -> str:
+    if backend_name == "mlx":
+        return mlx_model_id(profile)
+    return profile.model_id
+
+
+def default_mlx_python() -> Path | None:
+    env_override = os.environ.get("TTS_QWEN_MLX_PYTHON") or os.environ.get("MLX_AUDIO_PYTHON")
+    if env_override:
+        return Path(env_override)
+
+    candidate = PROJECT_ROOT.parent / ".venv-mlx-audio" / "bin" / "python"
+    if candidate.exists():
+        return candidate
+    return None
 
 
 def normalize_language(language: str | None) -> str:
