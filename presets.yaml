@@ -1,4 +1,6 @@
 presets:
+  # Apple Silicon daily-use default. MLX + larger chunking was the best practical
+  # path in local testing for long study audio on this machine class.
   study-fast:
     profile: fast
     backend: mlx
@@ -7,6 +9,8 @@ presets:
     format: wav
     chunk_chars: 450
 
+  # Use this when you explicitly want a stronger preset speaker and can accept
+  # a slower run than study-fast.
   study-quality:
     profile: quality
     backend: mlx
@@ -15,6 +19,8 @@ presets:
     format: wav
     chunk_chars: 400
 
+  # Design mode requires an instruction string. Keep this as a deliberate,
+  # slower preset rather than the default everyday path.
   study-design-calm:
     profile: design
     backend: mlx
